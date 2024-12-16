@@ -18,28 +18,25 @@ C.abs_dir = osp.realpath(".")
 
 # Dataset config
 """Dataset Path"""
-C.dataset_name = 'NYUDepthv2'
-C.dataset_path = osp.join(C.root_dir, 'datasets', 'NYUDepthv2')
+C.dataset_name = 'MFNet'
+C.dataset_path = osp.join(C.root_dir, 'datasets', 'MFNet')
 C.rgb_root_folder = osp.join(C.dataset_path, 'RGB')
-C.rgb_format = '.jpg'
+C.rgb_format = '.png'
 C.gt_root_folder = osp.join(C.dataset_path, 'Label')
 C.gt_format = '.png'
-C.gt_transform = True
+C.gt_transform = False
 # True when label 0 is invalid, you can also modify the function _transform_gt in dataloader.RGBXDataset
-# True for most dataset valid, Faslse for MFNet(?)
-C.x_root_folder = osp.join(C.dataset_path, 'HHA')
-C.x_format = '.jpg'
-C.x_is_single_channel = False # True for raw depth, thermal and aolp/dolp(not aolp/dolp tri) input
-C.train_source = osp.join(C.dataset_path, "train.txt")
+# True for most dataset valid, False for MFNet(?)
+C.x_root_folder = osp.join(C.dataset_path, 'Thermal')
+C.x_format = '.png'
+C.x_is_single_channel = True # True for raw depth, thermal and aolp/dolp(not aolp/dolp tri) input
+C.train_source = osp.join(C.dataset_path, "train_val.txt")
 C.eval_source = osp.join(C.dataset_path, "test.txt")
 C.is_test = False
-C.num_train_imgs = 795
-C.num_eval_imgs = 654
-C.num_classes = 40
-C.class_names =  ['wall','floor','cabinet','bed','chair','sofa','table','door','window','bookshelf','picture','counter','blinds',
-    'desk','shelves','curtain','dresser','pillow','mirror','floor mat','clothes','ceiling','books','refridgerator',
-    'television','paper','towel','shower curtain','box','whiteboard','person','night stand','toilet',
-    'sink','lamp','bathtub','bag','otherstructure','otherfurniture','otherprop']
+C.num_train_imgs = 1176
+C.num_eval_imgs = 393
+C.num_classes = 9
+C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Guardrail", "Color Cone", "Bump"]
 
 """Image Config"""
 C.background = 255
@@ -49,11 +46,16 @@ C.norm_mean = np.array([0.485, 0.456, 0.406])
 C.norm_std = np.array([0.229, 0.224, 0.225])
 
 """ Settings for network, this would be different for each kind of model"""
-C.backbone = 'mit_b2' # Remember change the path below.
+C.backbone = 'mit_b2' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
 C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
-C.decoder = 'MLPDecoder'
+C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.optimizer = 'AdamW'
+C.criterion = 'CrossEntropyLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss
+
+# SigmoidFocalLoss parameters
+C.FL_gamma = 4.0     
+C.FL_alpha = 0.25
 
 """Train Config"""
 C.lr = 6e-5
@@ -79,8 +81,8 @@ C.eval_flip = False # True #
 C.eval_crop_size = [480, 640] # [height weight]
 
 """Store Config"""
-C.checkpoint_start_epoch = 250
-C.checkpoint_step = 25
+C.checkpoint_start_epoch = 350
+C.checkpoint_step = 50
 
 """Path Config"""
 def add_path(path):
@@ -88,7 +90,12 @@ def add_path(path):
         sys.path.insert(0, path)
 add_path(osp.join(C.root_dir))
 
-C.log_dir = osp.abspath('log_' + C.dataset_name + '_' + C.backbone)
+if C.criterion == 'SigmoidFocalLoss':
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
+else:
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion + '_ssl_thermal'
+
+C.log_dir = osp.abspath(log_path)
 C.tb_dir = osp.abspath(osp.join(C.log_dir, "tb"))
 C.log_dir_link = C.log_dir
 C.checkpoint_dir = osp.abspath(osp.join(C.log_dir, "checkpoint"))
