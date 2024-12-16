@@ -102,8 +102,7 @@ class berHuLoss(nn.Module):
 
 
 class SigmoidFocalLoss(nn.Module):
-    def __init__(self, ignore_label, gamma=2.0, alpha=0.25,
-                 reduction='mean'):
+    def __init__(self, ignore_label, gamma=2.0, alpha=0.25, reduction='mean'):
         super(SigmoidFocalLoss, self).__init__()
         self.ignore_label = ignore_label
         self.gamma = gamma
@@ -111,27 +110,42 @@ class SigmoidFocalLoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, pred, target):
-        b, h, w = target.size()
-        pred = pred.view(b, -1, 1)
-        pred_sigmoid = pred.sigmoid()
-        target = target.view(b, -1).float()
-        mask = (target.ne(self.ignore_label)).float()
-        target = mask * target
-        onehot = target.view(b, -1, 1)
-
-        max_val = (-pred_sigmoid).clamp(min=0)
-
-        pos_part = (1 - pred_sigmoid) ** self.gamma * (
-                pred_sigmoid - pred_sigmoid * onehot)
-        neg_part = pred_sigmoid ** self.gamma * (max_val + (
-                (-max_val).exp() + (-pred_sigmoid - max_val).exp()).log())
-
-        loss = -(self.alpha * pos_part + (1 - self.alpha) * neg_part).sum(
-            dim=-1) * mask
+        b, c, h, w = pred.size()
+        pred = pred.view(b, c, -1)  # B,C,H*W
+        target = target.view(b, -1)  # B,H*W
+        
+        # Create a mask for valid pixels (not ignore_label)
+        valid_mask = (target != self.ignore_label).float()
+        
+        # Clip target values to be within the valid range
+        target = torch.clamp(target, 0, c - 1)
+        
+        # Convert target to one-hot encoding
+        target_one_hot = F.one_hot(target, num_classes=c).float().permute(0, 2, 1)
+        
+        # Calculate probabilities
+        probs = torch.sigmoid(pred)
+        pt = torch.where(target_one_hot == 1, probs, 1 - probs)
+        
+        # Calculate focal weight
+        focal_weight = (1 - pt) ** self.gamma
+        
+        # Calculate alpha weight
+        alpha_weight = torch.where(target_one_hot == 1, self.alpha * torch.ones_like(probs), (1 - self.alpha) * torch.ones_like(probs))
+        
+        # Calculate loss
+        loss = -alpha_weight * focal_weight * torch.log(pt + 1e-8)
+        
+        # Apply valid mask
+        loss = loss * valid_mask.unsqueeze(1)
+        
+        # Reduce loss
         if self.reduction == 'mean':
-            loss = loss.mean()
-
-        return loss
+            return loss.sum() / (valid_mask.sum() + 1e-8)
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:  # 'none'
+            return loss.sum(1)
 
 
 class ProbOhemCrossEntropy2d(nn.Module):
