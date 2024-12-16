@@ -20,6 +20,7 @@ from utils.lr_policy import WarmUpPolyLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss
 
 from tensorboardX import SummaryWriter
 
@@ -49,7 +50,14 @@ with Engine(custom_parser=parser) as engine:
         engine.link_tb(tb_dir, generate_tb_dir)
 
     # config network and criterion
-    criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+    FL_gamma = config.FL_gamma
+    FL_alpha = config.FL_alpha
+    criterion = config.criterion
+    if criterion == 'SigmoidFocalLoss':
+        criterion = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
+    elif criterion == 'CrossEntropyLoss':
+        criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+
 
     if engine.distributed:
         BatchNorm2d = nn.SyncBatchNorm
@@ -109,7 +117,7 @@ with Engine(custom_parser=parser) as engine:
         for idx in pbar:
             engine.update_iteration(epoch, idx)
 
-            minibatch = dataloader.next()
+            minibatch = next(dataloader)
             imgs = minibatch['data']
             gts = minibatch['label']
             modal_xs = minibatch['modal_x']
