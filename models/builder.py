@@ -15,6 +15,7 @@ class EncoderDecoder(nn.Module):
         super(EncoderDecoder, self).__init__()
         self.channels = [64, 128, 320, 512]
         self.norm_layer = norm_layer
+        self.cfg = cfg
         # import backbone and decoder
         if cfg.backbone == 'swin_s':
             logger.info('Using backbone: Swin-Transformer-small')
@@ -26,6 +27,34 @@ class EncoderDecoder(nn.Module):
             from .encoders.dual_swin import swin_b as backbone
             self.channels = [128, 256, 512, 1024]
             self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'segnext_tiny':
+            logger.info('Using backbone: SegNeXt-Tiny')
+            from .encoders.dual_segnext import segnext_tiny as backbone
+            self.channels = [32, 64, 160, 256]
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'segnext_s':
+            logger.info('Using backbone: SegNeXt-Small')
+            from .encoders.dual_segnext import segnext_s as backbone
+            self.channels = [64, 128, 320, 512]
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'segnext_b':
+            logger.info('Using backbone: SegNeXt-Base')
+            from .encoders.dual_segnext import segnext_b as backbone
+            self.channels = [128, 256, 512, 1024]
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'segnext_large':
+            logger.info('Using backbone: SegNeXt-Large')
+            from .encoders.dual_segnext import segnext_large as backbone
+            self.channels = [96, 192, 384, 768]
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'resnet101':
+            logger.info('Using backbone: ResNet-101')
+            from .encoders.dual_resnet import dual_resnet101 as backbone
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'resnet152':
+            logger.info('Using backbone: ResNet-152')
+            from .encoders.dual_resnet import dual_resnet152 as backbone
+            self.backbone = backbone(norm_fuse=norm_layer)
         elif cfg.backbone == 'mit_b5':
             logger.info('Using backbone: Segformer-B5')
             from .encoders.dual_segformer import mit_b5 as backbone
@@ -33,6 +62,10 @@ class EncoderDecoder(nn.Module):
         elif cfg.backbone == 'mit_b4':
             logger.info('Using backbone: Segformer-B4')
             from .encoders.dual_segformer import mit_b4 as backbone
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'mit_b2':
+            logger.info('Using backbone: Segformer-B3')
+            from .encoders.dual_segformer import mit_b3 as backbone
             self.backbone = backbone(norm_fuse=norm_layer)
         elif cfg.backbone == 'mit_b2':
             logger.info('Using backbone: Segformer-B2')
