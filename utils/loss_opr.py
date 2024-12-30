@@ -199,3 +199,131 @@ class ProbOhemCrossEntropy2d(nn.Module):
         target = target.view(b, h, w)
 
         return self.criterion(pred, target)
+
+class Mask2FormerLoss(nn.Module):
+    def __init__(self, num_classes, matcher_weight_dict={'class': 2, 'mask': 5, 'dice': 5}, 
+                 losses=['labels', 'masks'], eos_coef=0.1, ignore_index=255):
+        """
+        Parameters:
+            num_classes: number of object classes (including background)
+            matcher_weight_dict: weights for matcher cost computation
+            losses: list of losses to apply
+            eos_coef: relative weight for no-object class
+            ignore_index: label value to ignore
+        """
+        super().__init__()
+        self.num_classes = num_classes
+        self.matcher_weight_dict = matcher_weight_dict
+        self.losses = losses
+        self.eos_coef = eos_coef
+        self.ignore_index = ignore_index
+        
+        # Create class weight for cross entropy
+        empty_weight = torch.ones(self.num_classes + 1)
+        empty_weight[-1] = self.eos_coef  # lower weight for no-object class
+        self.register_buffer('empty_weight', empty_weight)
+
+    def loss_labels(self, outputs, targets, indices):
+        """Classification loss (NLL)"""
+        src_logits = outputs['pred_logits']  # [B, num_queries, num_classes+1]
+        
+        # Flatten the targets to match with predictions
+        B, num_queries, _ = src_logits.shape
+        target_classes = torch.full((B, num_queries), self.num_classes,
+                                  dtype=torch.int64, device=src_logits.device)
+        
+        # Create a binary mask for valid (non-ignored) pixels
+        valid_mask = targets != self.ignore_index  # [B, H, W]
+        
+        # For each valid pixel in the target, assign it to the closest query
+        for b in range(B):
+            valid_pixels = valid_mask[b]  # [H, W]
+            if valid_pixels.any():
+                # Get valid target values
+                valid_targets = targets[b][valid_pixels]  # [N]
+                
+                # Get predictions for this batch
+                pred_masks = outputs['pred_masks'][b]  # [num_queries, H, W]
+                pred_masks = pred_masks[:, valid_pixels]  # [num_queries, N]
+                
+                # Compute similarity between queries and target pixels
+                similarity = pred_masks.sigmoid()  # [num_queries, N]
+                
+                # Assign each pixel to the most similar query
+                assignments = similarity.max(dim=0)[1]  # [N]
+                
+                # Update target classes for assigned queries
+                for query_idx in range(num_queries):
+                    query_pixels = assignments == query_idx
+                    if query_pixels.any():
+                        # Most common class for this query's assigned pixels
+                        target_class = valid_targets[query_pixels].mode()[0]
+                        target_classes[b, query_idx] = target_class
+        
+        # Add focal loss
+        ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, 
+                                self.empty_weight, ignore_index=self.num_classes,
+                                reduction='none')
+        p = torch.exp(-ce_loss)
+        loss_ce = ((1 - p) ** 2.0) * ce_loss
+        loss_ce = loss_ce.mean()
+        
+        return loss_ce
+
+    def loss_masks(self, outputs, targets, indices):
+        """Compute the losses related to the masks"""
+        src_masks = outputs['pred_masks']  # [B, Q, H, W]
+        B, Q, H, W = src_masks.shape
+
+        # Cross entropy loss - reshape masks to [B*H*W, Q]
+        src_masks_ce = src_masks.permute(0, 2, 3, 1).reshape(-1, Q)  # [B*H*W, Q]
+        targets_ce = targets.reshape(-1)  # [B*H*W]
+        
+        # Don't use class weights for mask loss
+        ce_loss = F.cross_entropy(src_masks_ce, targets_ce, 
+                                weight=None,  # Remove empty_weight here
+                                ignore_index=self.ignore_index,
+                                reduction='mean')
+
+        # Dice loss
+        target_masks = (targets.unsqueeze(1) == torch.arange(self.num_classes, 
+                       device=targets.device).reshape(1, -1, 1, 1))
+        target_masks = target_masks.float()
+        
+        valid_mask = (targets != self.ignore_index).unsqueeze(1).float()
+        
+        src_masks = src_masks.sigmoid()
+        dice_loss = 0
+        
+        for i in range(self.num_classes):
+            if target_masks[:, i].sum() > 0:
+                dice_score = 2 * (src_masks * target_masks[:, i].unsqueeze(1) * valid_mask).sum(dim=(2, 3)) / \
+                           (src_masks.sum(dim=(2, 3)) + target_masks[:, i].unsqueeze(1).sum(dim=(2, 3)) + 1e-8)
+                dice_loss += (1 - dice_score.mean())
+        
+        dice_loss = dice_loss / self.num_classes
+
+        # Combine losses with their respective weights
+        combined_loss = self.matcher_weight_dict['mask'] * ce_loss + \
+                       self.matcher_weight_dict['dice'] * dice_loss
+        
+        return combined_loss
+
+    def forward(self, outputs, targets):
+        """
+        Parameters:
+            outputs: dict containing 'pred_logits' and 'pred_masks'
+            targets: ground truth segmentation map [B, H, W]
+        """
+        losses = {}
+        
+        if 'labels' in self.losses:
+            losses['loss_cls'] = self.loss_labels(outputs, targets, None) * self.matcher_weight_dict['class']
+        
+        if 'masks' in self.losses:
+            losses['loss_mask'] = self.loss_masks(outputs, targets, None)
+        
+        # Compute total loss as weighted sum
+        total_loss = sum(losses.values())
+        
+        return total_loss
