@@ -24,6 +24,58 @@ def random_scale(rgb, gt, modal_x, scales):
 
     return rgb, gt, modal_x, scale
 
+def random_color_jitter(rgb, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1):
+    # Convert to HSV (Hue, Saturation, Value) color space
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_BGR2HSV).astype(np.float32)
+
+    # Apply random brightness
+    brightness_factor = 1.0 + random.uniform(-brightness, brightness)
+    hsv[:, :, 2] *= brightness_factor
+
+    # Apply random saturation
+    saturation_factor = 1.0 + random.uniform(-saturation, saturation)
+    hsv[:, :, 1] *= saturation_factor
+
+    # Apply random hue
+    hue_factor = random.uniform(-hue, hue)
+    hsv[:, :, 0] += hue_factor * 180  # OpenCV uses 0-180 for hue
+
+    # Clip values to valid range
+    hsv = np.clip(hsv, 0, 255)
+
+    # Convert back to BGR color space
+    rgb = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+    return rgb
+
+def random_gaussian_blur(rgb, kernel_size=(5, 5), sigma=1.0):
+    if random.random() >= 0.5:
+        rgb = cv2.GaussianBlur(rgb, kernel_size, sigma)
+    return rgb
+
+def cutout(rgb, gt, modal_x, mask_size=25, p=0.5):
+    if random.random() > p:
+        return rgb, gt, modal_x
+
+    h, w = rgb.shape[:2]
+    mask_size_half = mask_size // 2
+
+    # Randomly choose the center of the mask
+    cx = random.randint(mask_size_half, w - mask_size_half)
+    cy = random.randint(mask_size_half, h - mask_size_half)
+
+    # Calculate the coordinates of the mask
+    x1 = max(0, cx - mask_size_half)
+    y1 = max(0, cy - mask_size_half)
+    x2 = min(w, cx + mask_size_half)
+    y2 = min(h, cy + mask_size_half)
+
+    # Apply the cutout
+    rgb[y1:y2, x1:x2, :] = 0
+    gt[y1:y2, x1:x2] = 255  # Assuming 255 is the ignore label
+    modal_x[y1:y2, x1:x2, :] = 0
+
+    return rgb, gt, modal_x
+
 class TrainPre(object):
     def __init__(self, norm_mean, norm_std):
         self.norm_mean = norm_mean
@@ -33,6 +85,10 @@ class TrainPre(object):
         rgb, gt, modal_x = random_mirror(rgb, gt, modal_x)
         if config.train_scale_array is not None:
             rgb, gt, modal_x, scale = random_scale(rgb, gt, modal_x, config.train_scale_array)
+
+        rgb = random_color_jitter(rgb)
+        rgb = random_gaussian_blur(rgb)
+        rgb, gt, modal_x = cutout(rgb, gt, modal_x)
 
         rgb = normalize(rgb, self.norm_mean, self.norm_std)
         modal_x = normalize(modal_x, self.norm_mean, self.norm_std)
