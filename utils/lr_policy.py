@@ -6,6 +6,7 @@
 # @File    : lr_policy.py.py
 
 from abc import ABCMeta, abstractmethod
+import math
 
 
 class BaseLR():
@@ -62,3 +63,35 @@ class LinearIncreaseLR(BaseLR):
 
     def get_lr(self, cur_epoch):
         return self._start_lr + cur_epoch * self._delta_lr
+
+
+class CyclicLR(BaseLR):
+    def __init__(self, min_lr, max_lr, cycle_epochs, warmup_epochs, total_iters, iters_per_epoch):
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.cycle_epochs = cycle_epochs
+        self.warmup_epochs = warmup_epochs
+        self.total_iters = total_iters
+        self.iters_per_epoch = iters_per_epoch
+        self.min_momentum = 0.85
+        self.max_momentum = 0.95
+
+    def get_lr(self, cur_iter):
+        current_epoch = cur_iter // self.iters_per_epoch
+        
+        # Warmup phase
+        if current_epoch < self.warmup_epochs:
+            return self.min_lr + (self.max_lr - self.min_lr) * (cur_iter / (self.warmup_epochs * self.iters_per_epoch))
+        
+        # After warmup, use cosine annealing with warm restarts
+        current_epoch = current_epoch - self.warmup_epochs
+        cycle = current_epoch // self.cycle_epochs
+        cycle_epoch = current_epoch % self.cycle_epochs
+        
+        # Cosine annealing formula
+        cos_progress = math.cos(math.pi * cycle_epoch / self.cycle_epochs)
+        lr = self.min_lr + 0.5 * (self.max_lr - self.min_lr) * (1 + cos_progress)
+        
+        # Momentum varies inversely with learning rate
+        momentum = self.max_momentum - 0.5 * (self.max_momentum - self.min_momentum) * (1 + cos_progress)
+        return lr, momentum
