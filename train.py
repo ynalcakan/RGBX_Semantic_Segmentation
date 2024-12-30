@@ -57,6 +57,21 @@ with Engine(custom_parser=parser) as engine:
         criterion = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
     elif criterion == 'CrossEntropyLoss':
         criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+    elif criterion == 'BalanceLoss':
+        criterion = BalanceLoss(ignore_index=config.background, reduction='mean')
+    elif criterion == 'RCELoss':
+        criterion = RCELoss(ignore_index=config.background, reduction='mean')
+    elif criterion == 'berHuLoss':
+        criterion = berHuLoss(ignore_index=config.background, reduction='mean')
+    elif criterion == "FocalLoss2d":
+        criterion = FocalLoss2d(ignore_index=config.background, reduction='mean')
+    elif criterion == 'CE_Focal':
+        # multiple loss function
+        criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+        criterion2 = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
+        criterion = (criterion, criterion2)
+    else:
+        raise NotImplementedError
 
 
     if engine.distributed:
@@ -70,16 +85,18 @@ with Engine(custom_parser=parser) as engine:
     base_lr = config.lr
     if engine.distributed:
         base_lr = config.lr
-    
-    params_list = []
-    params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
-    
-    if config.optimizer == 'AdamW':
-        optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
-    elif config.optimizer == 'SGDM':
-        optimizer = torch.optim.SGD(params_list, lr=base_lr, momentum=config.momentum, weight_decay=config.weight_decay)
-    else:
-        raise NotImplementedError
+
+        params_list = []
+        params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
+        
+        if config.optimizer == 'AdamW':
+            optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
+        elif config.optimizer == 'SGDM':
+            optimizer = torch.optim.SGD(params_list, lr=base_lr, momentum=config.momentum, weight_decay=config.weight_decay)
+        elif config.optimizer == 'LBFGS':
+            optimizer = torch.optim.LBFGS(params_list, lr=base_lr, max_iter=20, max_eval=None, tolerance_grad=1e-7, tolerance_change=1e-9, history_size=100, line_search_fn=None)
+        else:
+            raise NotImplementedError
 
     # config lr policy
     total_iteration = config.nepochs * config.niters_per_epoch
