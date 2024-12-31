@@ -95,3 +95,13 @@ class CyclicLR(BaseLR):
         # Momentum varies inversely with learning rate
         momentum = self.max_momentum - 0.5 * (self.max_momentum - self.min_momentum) * (1 + cos_progress)
         return lr, momentum
+    
+
+class StepLR(BaseLR):
+    def __init__(self, start_lr, step_size, gamma):
+        self.start_lr = start_lr
+        self.step_size = step_size
+        self.gamma = gamma
+
+    def get_lr(self, cur_epoch):
+        return self.start_lr * (self.gamma ** (cur_epoch // self.step_size))
