@@ -327,3 +327,97 @@ class Mask2FormerLoss(nn.Module):
         total_loss = sum(losses.values())
         
         return total_loss
+
+class TopologyAwareLoss(nn.Module):
+    def __init__(self, ignore_index=255, reduction='mean', boundary_weight=1.0, connectivity_weight=0.1):
+        super(TopologyAwareLoss, self).__init__()
+        self.ignore_index = ignore_index
+        self.reduction = reduction
+        self.boundary_weight = boundary_weight
+        self.connectivity_weight = connectivity_weight
+        
+        # Laplacian kernel for boundary detection
+        self.laplacian_kernel = torch.tensor([
+            [-1, -1, -1],
+            [-1,  8, -1],
+            [-1, -1, -1]
+        ], dtype=torch.float32).reshape(1, 1, 3, 3).requires_grad_(False).cuda()
+        
+    def get_boundary_map(self, tensor):
+        if len(tensor.shape) == 3:
+            tensor = tensor.unsqueeze(1)
+        tensor = tensor.float()
+        boundary = F.conv2d(tensor, self.laplacian_kernel, padding=1)
+        boundary = torch.abs(boundary)
+        boundary = (boundary > 0.1).float()
+        return boundary
+        
+    def forward(self, pred, target):
+        # Get predicted class probabilities
+        pred_soft = F.softmax(pred, dim=1)
+        num_classes = pred.size(1)
+        
+        # Create mask for valid pixels (not ignored)
+        valid_mask = (target != self.ignore_index)
+        
+        # Mask out ignored pixels in target
+        masked_target = target.clone()
+        masked_target[~valid_mask] = 0
+        
+        # Create one-hot encoded target (only for valid pixels)
+        target_one_hot = torch.zeros_like(pred_soft)
+        for c in range(num_classes):
+            class_mask = (masked_target == c) & valid_mask
+            target_one_hot[:, c][class_mask] = 1
+        
+        # Calculate boundary loss
+        boundary_loss = 0
+        for i in range(num_classes):
+            pred_boundary = self.get_boundary_map(pred_soft[:, i:i+1])
+            target_boundary = self.get_boundary_map(target_one_hot[:, i:i+1])
+            # Only compute loss for valid regions
+            valid_boundary = valid_mask.unsqueeze(1).float()
+            boundary_loss += F.binary_cross_entropy_with_logits(
+                pred_boundary * valid_boundary,
+                target_boundary * valid_boundary,
+                reduction='sum'
+            )
+        boundary_loss = boundary_loss / (valid_mask.float().sum() + 1e-8)
+        
+        # Calculate connectivity loss
+        connectivity_loss = 0
+        for i in range(pred.size(0)):  # For each sample in batch
+            for c in range(num_classes):
+                # Skip ignored class
+                if c == self.ignore_index:
+                    continue
+                    
+                # Get masks for current class
+                pred_mask = (pred_soft[i, c] > 0.5).float()
+                target_mask = target_one_hot[i, c].float()
+                
+                # Skip if no target pixels for this class
+                if target_mask.sum() == 0:
+                    continue
+                
+                # Apply valid mask
+                pred_mask = pred_mask * valid_mask[i].float()
+                target_mask = target_mask * valid_mask[i].float()
+                
+                # Get connected components
+                pred_components = self.get_connected_components(pred_mask)
+                target_components = self.get_connected_components(target_mask)
+                
+                # Penalize difference in number of components
+                connectivity_loss += torch.abs(pred_components - target_components)
+        
+        connectivity_loss = connectivity_loss / (pred.size(0) * num_classes + 1e-8)
+        
+        return self.boundary_weight * boundary_loss + self.connectivity_weight * connectivity_loss
+    
+    def get_connected_components(self, mask):
+        # Convert to numpy for connected components analysis
+        mask_np = mask.detach().cpu().numpy()
+        _, num_components = nd.label(mask_np)
+        return torch.tensor(num_components, device=mask.device).float()
+
