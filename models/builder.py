@@ -190,9 +190,7 @@ class EncoderDecoder(nn.Module):
             out = self.encode_decode(rgb, modal_x)
         if label is not None:
             if isinstance(self.criterion, tuple):
-                loss = 0
-                for criterion in self.criterion:
-                    loss += criterion(out, label.long())
+                loss = self.criterion[0](out, label.long()) + 0.2 * self.criterion[1](out, label.long())
             else:
                 loss = self.criterion(out, label.long())
             if self.aux_head:
