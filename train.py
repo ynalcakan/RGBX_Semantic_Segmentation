@@ -106,9 +106,8 @@ with Engine(custom_parser=parser) as engine:
 
     # config lr policy
     total_iteration = config.nepochs * config.niters_per_epoch
-    #lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
-    lr_policy = StepLR(base_lr, config.niters_per_epoch * config.step_size, config.lr_power)
-    
+    lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+
     if engine.distributed:
         logger.info('.............distributed training.............')
         if torch.cuda.is_available():
