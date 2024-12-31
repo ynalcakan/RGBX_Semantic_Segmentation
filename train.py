@@ -16,11 +16,11 @@ from dataloader.dataloader import get_train_loader
 from models.builder import EncoderDecoder as segmodel
 from dataloader.RGBXDataset import RGBXDataset
 from utils.init_func import init_weight, group_weight
-from utils.lr_policy import WarmUpPolyLR
+from utils.lr_policy import WarmUpPolyLR, StepLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss
 
 from tensorboardX import SummaryWriter
 
@@ -52,6 +52,7 @@ with Engine(custom_parser=parser) as engine:
     # config network and criterion
     FL_gamma = config.FL_gamma
     FL_alpha = config.FL_alpha
+
     criterion = config.criterion
     if criterion == 'SigmoidFocalLoss':
         criterion = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
@@ -70,6 +71,11 @@ with Engine(custom_parser=parser) as engine:
         criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
         criterion2 = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
         criterion = (criterion, criterion2)
+    elif criterion == 'TopologyAwareCE':
+        # Combine CrossEntropy with Topology loss
+        criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+        criterion2 = TopologyAwareLoss(ignore_index=config.background, reduction='mean')
+        criterion = (criterion1, criterion2)
     else:
         raise NotImplementedError
 
@@ -100,8 +106,9 @@ with Engine(custom_parser=parser) as engine:
 
     # config lr policy
     total_iteration = config.nepochs * config.niters_per_epoch
-    lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
-
+    #lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+    lr_policy = StepLR(base_lr, config.niters_per_epoch * config.step_size, config.lr_power)
+    
     if engine.distributed:
         logger.info('.............distributed training.............')
         if torch.cuda.is_available():
@@ -112,8 +119,8 @@ with Engine(custom_parser=parser) as engine:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
 
-    engine.register_state(dataloader=train_loader, model=model,
-                          optimizer=optimizer)
+    engine.register_state(dataloader=train_loader, model=model,optimizer=optimizer)
+
     if engine.continue_state_object:
         engine.restore_checkpoint()
 
