@@ -15,6 +15,71 @@ from engine.logger import get_logger
 logger = get_logger()
 
 
+class ASPPConv(nn.Module):
+    def __init__(self, in_channels, out_channels, atrous_rate, norm_layer):
+        super(ASPPConv, self).__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, padding=atrous_rate, dilation=atrous_rate, bias=False),
+            norm_layer(out_channels),
+            nn.ReLU(True)
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class AsppPooling(nn.Module):
+    def __init__(self, in_channels, out_channels, norm_layer):
+        super(AsppPooling, self).__init__()
+        self.gap = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels, out_channels, 1, bias=False),
+            norm_layer(out_channels),
+            nn.ReLU(True)
+        )
+
+    def forward(self, x):
+        size = x.size()[2:]
+        pool = self.gap(x)
+        out = F.interpolate(pool, size, mode='bilinear', align_corners=True)
+        return out
+
+
+class ASPP(nn.Module):
+    def __init__(self, in_channels, atrous_rates, norm_layer=nn.BatchNorm2d):
+        super(ASPP, self).__init__()
+        out_channels = in_channels
+        
+        self.b0 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(True)
+        )
+
+        rate1, rate2, rate3 = tuple(atrous_rates)
+        self.b1 = ASPPConv(in_channels, out_channels, rate1, nn.BatchNorm2d)
+        self.b2 = ASPPConv(in_channels, out_channels, rate2, nn.BatchNorm2d)
+        self.b3 = ASPPConv(in_channels, out_channels, rate3, nn.BatchNorm2d)
+        self.b4 = AsppPooling(in_channels, out_channels, norm_layer=nn.BatchNorm2d)
+
+        self.project = nn.Sequential(
+            nn.Conv2d(5 * out_channels, out_channels, 1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(True),
+            nn.Dropout(0.5)
+        )
+
+    def forward(self, x):
+        feat1 = self.b0(x)
+        feat2 = self.b1(x)
+        feat3 = self.b2(x)
+        feat4 = self.b3(x)
+        feat5 = self.b4(x)
+        x = torch.cat((feat1, feat2, feat3, feat4, feat5), dim=1)
+        x = self.project(x)
+        return x
+    
+    
 class DWConv(nn.Module):
     """
     Depthwise convolution bloc: input: x with size(B N C); output size (B N C)
@@ -312,16 +377,30 @@ class RGBXTransformer(nn.Module):
         cur += depths[3]
 
         self.FRMs = nn.ModuleList([
-                    IFRM(dim=embed_dims[0], reduction=1),
-                    IFRM(dim=embed_dims[1], reduction=1),
-                    IFRM(dim=embed_dims[2], reduction=1),
-                    IFRM(dim=embed_dims[3], reduction=1)])
+                    FRM(dim=embed_dims[0], reduction=1),
+                    FRM(dim=embed_dims[1], reduction=1),
+                    FRM(dim=embed_dims[2], reduction=1),
+                    FRM(dim=embed_dims[3], reduction=1)])
 
         self.FFMs = nn.ModuleList([
-                    IFFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
-                    IFFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
-                    IFFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
-                    IFFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
+                    FFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
+                    FFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
+                    FFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
+                    FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
+
+        # Add ASPP module for the final stage
+        # self.aspp = ASPP(
+        #     in_channels=embed_dims[3],  # Use the final stage's embedding dimension
+        #     atrous_rates=[6, 12, 18],   # Standard ASPP rates
+        #     norm_layer=norm_fuse        # Use the same normalization as fusion modules
+        # )
+        # Add ASPP modules for each stage
+        self.aspp_modules = nn.ModuleList([
+            ASPP(embed_dims[0], atrous_rates=[3, 6, 9], norm_layer=nn.BatchNorm2d),
+            ASPP(embed_dims[1], atrous_rates=[6, 12, 18], norm_layer=nn.BatchNorm2d),
+            ASPP(embed_dims[2], atrous_rates=[12, 24, 36], norm_layer=nn.BatchNorm2d),
+            ASPP(embed_dims[3], atrous_rates=[12, 24, 36], norm_layer=nn.BatchNorm2d)
+        ])
 
         self.apply(self._init_weights)
 
@@ -369,6 +448,7 @@ class RGBXTransformer(nn.Module):
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_rgb, x_e = self.FRMs[0](x_rgb, x_e)
         x_fused = self.FFMs[0](x_rgb, x_e)
+        x_fused = self.aspp_modules[0](x_fused)
         outs.append(x_fused)
         
 
@@ -386,6 +466,7 @@ class RGBXTransformer(nn.Module):
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_rgb, x_e = self.FRMs[1](x_rgb, x_e)
         x_fused = self.FFMs[1](x_rgb, x_e)
+        x_fused = self.aspp_modules[1](x_fused)
         outs.append(x_fused)
         
 
@@ -403,6 +484,7 @@ class RGBXTransformer(nn.Module):
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_rgb, x_e = self.FRMs[2](x_rgb, x_e)
         x_fused = self.FFMs[2](x_rgb, x_e)
+        x_fused = self.aspp_modules[2](x_fused)
         outs.append(x_fused)
         
 
@@ -420,6 +502,7 @@ class RGBXTransformer(nn.Module):
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_rgb, x_e = self.FRMs[3](x_rgb, x_e)
         x_fused = self.FFMs[3](x_rgb, x_e)
+        x_fused = self.aspp_modules[3](x_fused)
         outs.append(x_fused)
         
         return outs
