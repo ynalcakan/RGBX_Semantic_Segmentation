@@ -25,6 +25,7 @@ class SegEvaluator(Evaluator):
         label = data['label']
         modal_x = data['modal_x']
         name = data['fn']
+        dataset_name = config.dataset_name
         pred = self.sliding_eval_rgbX(img, modal_x, config.eval_crop_size, config.eval_stride_rate, device)
         hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
         results_dict = {'hist': hist_tmp, 'labeled': labeled_tmp, 'correct': correct_tmp}
@@ -37,7 +38,7 @@ class SegEvaluator(Evaluator):
 
             # save colored result
             result_img = Image.fromarray(pred.astype(np.uint8), mode='P')
-            class_colors = self.dataset.get_class_colors()
+            class_colors = self.dataset.get_class_colors(dataset_name=dataset_name)
             palette_list = list(np.array(class_colors).flat)
             if len(palette_list) < 768:
                 palette_list += [0] * (768 - len(palette_list))
@@ -49,7 +50,7 @@ class SegEvaluator(Evaluator):
             logger.info('Save the image ' + fn)
 
         if self.show_image:
-            colors = self.dataset.get_class_colors
+            colors = self.dataset.get_class_colors(dataset_name=dataset_name)
             image = img
             clean = np.zeros(label.shape)
             comp_img = show_img(colors, config.background, image, clean,
@@ -94,13 +95,15 @@ if __name__ == "__main__":
                     'gt_root': config.gt_root_folder,
                     'gt_format': config.gt_format,
                     'transform_gt': config.gt_transform,
-                    'x_root':config.x_root_folder,
+                    'x_root': config.x_root_folder,
                     'x_format': config.x_format,
                     'x_single_channel': config.x_is_single_channel,
                     'class_names': config.class_names,
                     'train_source': config.train_source,
                     'eval_source': config.eval_source,
-                    'class_names': config.class_names}
+                    'dataset_name': config.dataset_name,
+                    'background': config.background,
+                    'num_classes': config.num_classes}
     val_pre = ValPre()
     dataset = RGBXDataset(data_setting, 'val', val_pre)
  
