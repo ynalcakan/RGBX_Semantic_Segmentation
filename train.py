@@ -53,25 +53,30 @@ with Engine(custom_parser=parser) as engine:
     FL_gamma = config.FL_gamma
     FL_alpha = config.FL_alpha
 
-    criterion = config.criterion
-    if criterion == 'SigmoidFocalLoss':
-        criterion = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
-    elif criterion == 'CrossEntropyLoss':
+    if engine.distributed:
+        BatchNorm2d = nn.SyncBatchNorm
+    else:
+        BatchNorm2d = nn.BatchNorm2d
+    
+    # Initialize criterion with correct background value
+    if config.criterion == 'SigmoidFocalLoss':
+        criterion = SigmoidFocalLoss(ignore_label=config.background, gamma=config.FL_gamma, alpha=config.FL_alpha, reduction='mean')
+    elif config.criterion == 'CrossEntropyLoss':
         criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
-    elif criterion == 'BalanceLoss':
+    elif config.criterion == 'BalanceLoss':
         criterion = BalanceLoss(ignore_index=config.background, reduction='mean')
-    elif criterion == 'RCELoss':
+    elif config.criterion == 'RCELoss':
         criterion = RCELoss(ignore_index=config.background, reduction='mean')
-    elif criterion == 'berHuLoss':
+    elif config.criterion == 'berHuLoss':
         criterion = berHuLoss(ignore_index=config.background, reduction='mean')
-    elif criterion == "FocalLoss2d":
+    elif config.criterion == "FocalLoss2d":
         criterion = FocalLoss2d(ignore_index=config.background, reduction='mean')
-    elif criterion == 'CE_Focal':
+    elif config.criterion == 'CE_Focal':
         # multiple loss function
-        criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
-        criterion2 = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
-        criterion = (criterion, criterion2)
-    elif criterion == 'TopologyAwareCE':
+        criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+        criterion2 = SigmoidFocalLoss(ignore_label=config.background, gamma=config.FL_gamma, alpha=config.FL_alpha, reduction='mean')
+        criterion = (criterion1, criterion2)
+    elif config.criterion == 'TopologyAwareCE':
         # Combine CrossEntropy with Topology loss
         criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
         criterion2 = TopologyAwareLoss(ignore_index=config.background, reduction='mean')
@@ -79,19 +84,30 @@ with Engine(custom_parser=parser) as engine:
     else:
         raise NotImplementedError
 
-
-    if engine.distributed:
-        BatchNorm2d = nn.SyncBatchNorm
-    else:
-        BatchNorm2d = nn.BatchNorm2d
+    # Store fixed samples for visualization
+    fixed_samples = None
     
-    model=segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
+    model = segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
     
     # group weight and config optimizer
     base_lr = config.lr
     if engine.distributed:
         base_lr = config.lr
 
+        params_list = []
+        params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
+        
+        if config.optimizer == 'AdamW':
+            optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
+        elif config.optimizer == 'SGDM':
+            optimizer = torch.optim.SGD(params_list, lr=base_lr, momentum=config.momentum, weight_decay=config.weight_decay)
+        elif config.optimizer == 'LBFGS':
+            optimizer = torch.optim.LBFGS(params_list, lr=base_lr, max_iter=20, max_eval=None, tolerance_grad=1e-7, tolerance_change=1e-9, history_size=100, line_search_fn=None)
+        else:
+            raise NotImplementedError
+    else:
+        base_lr = config.lr
+        
         params_list = []
         params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
         
@@ -181,16 +197,95 @@ with Engine(custom_parser=parser) as engine:
 
             del loss
             pbar.set_description(print_str, refresh=False)
-        
-        if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
-            tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
+            
+            # Log learning rate and visualize samples
+            if ((engine.distributed and (engine.local_rank == 0)) or (not engine.distributed)):
+                # Log learning rate every 100 iterations
+                if idx % 100 == 0:
+                    tb.add_scalar('train/learning_rate', lr, current_idx)
+                
+                # Visualize sample predictions (once per epoch)
+                if idx == 0:
+                    with torch.no_grad():
+                        # Store fixed samples in the first epoch
+                        if fixed_samples is None and epoch == 1:
+                            fixed_samples = {
+                                'imgs': imgs[2:4].clone(),  # Store 2 samples
+                                'gts': gts[2:4].clone(),
+                                'modal_xs': modal_xs[2:4].clone()
+                            }
+                        
+                        # Use fixed samples for visualization
+                        vis_imgs = fixed_samples['imgs'] if fixed_samples is not None else imgs[2:4]
+                        vis_gts = fixed_samples['gts'] if fixed_samples is not None else gts[2:4]
+                        vis_modal_xs = fixed_samples['modal_xs'] if fixed_samples is not None else modal_xs[2:4]
+                        
+                        # Get model predictions
+                        if isinstance(model, DistributedDataParallel):
+                            pred = model.module(vis_imgs, vis_modal_xs)
+                        else:
+                            pred = model(vis_imgs, vis_modal_xs)
+                        
+                        # Convert predictions to visualizable format
+                        if isinstance(pred, tuple):  # If model returns multiple outputs
+                            pred = pred[0]  # Take the main prediction
+                        pred = torch.argmax(pred, dim=1)  # Convert to class indices
+                        
+                        # Log a few sample images with their predictions
+                        for b in range(min(2, vis_imgs.size(0))):  # Log up to 2 samples
+                            # Save static images only in the first epoch
+                            if epoch == 1:
+                                # Original RGB image - normalize to [0,1] range and convert BGR to RGB
+                                rgb_img = vis_imgs[b].clone()
+                                rgb_img = (rgb_img - rgb_img.min()) / (rgb_img.max() - rgb_img.min())
+                                # Convert BGR to RGB by swapping channels
+                                rgb_img = rgb_img[[2,1,0], :, :]  # Reorder channels from BGR to RGB
+                                tb.add_image(f'sample_{b}/rgb', 
+                                           rgb_img, 0)  # Use step 0 for static images
+                                
+                                # Ground truth visualization with colors
+                                colormap = torch.tensor([
+                                    [0, 0, 0],        # unlabeled - black
+                                    [0, 0, 255],      # fire extinguisher - blue
+                                    [0, 255, 0],      # backpack - green
+                                    [255, 0, 0],      # hand drill - red
+                                    [255, 255, 255],  # rescue randy - white
+                                ], device=vis_gts.device).float() / 255.0  # Normalize to [0,1]
+                                
+                                H, W = vis_gts[b].shape[-2:]
+                                gt_vis = torch.zeros((3, H, W), device=vis_gts.device)
+                                for i in range(len(colormap)):
+                                    mask = (vis_gts[b] == i)
+                                    for c in range(3):
+                                        gt_vis[c][mask] = colormap[i][c]
+                                tb.add_image(f'sample_{b}/ground_truth', 
+                                           gt_vis, 0)  # Use step 0 for static images
+                                
+                                # Modal X input - normalize to [0,1] range
+                                modal_x_img = vis_modal_xs[b].clone()
+                                modal_x_img = (modal_x_img - modal_x_img.min()) / (modal_x_img.max() - modal_x_img.min())
+                                tb.add_image(f'sample_{b}/modal_x',
+                                           modal_x_img, 0)  # Use step 0 for static images
+                            
+                            # Prediction visualization with colors (save for every epoch)
+                            H, W = vis_gts[b].shape[-2:]
+                            pred_vis = torch.zeros((3, H, W), device=pred.device)
+                            for i in range(len(colormap)):
+                                mask = (pred[b] == i)
+                                for c in range(3):
+                                    pred_vis[c][mask] = colormap[i][c]
+                            tb.add_image(f'sample_{b}/prediction',
+                                       pred_vis, epoch)
 
-        if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
-            if engine.distributed and (engine.local_rank == 0):
-                engine.save_and_link_checkpoint(config.checkpoint_dir,
-                                                config.log_dir,
-                                                config.log_dir_link)
-            elif not engine.distributed:
-                engine.save_and_link_checkpoint(config.checkpoint_dir,
-                                                config.log_dir,
-                                                config.log_dir_link)
+            if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
+                tb.add_scalar('train/epoch_loss', sum_loss / len(pbar), epoch)
+
+            if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
+                if engine.distributed and (engine.local_rank == 0):
+                    engine.save_and_link_checkpoint(config.checkpoint_dir,
+                                                    config.log_dir,
+                                                    config.log_dir_link)
+                elif not engine.distributed:
+                    engine.save_and_link_checkpoint(config.checkpoint_dir,
+                                                    config.log_dir,
+                                                    config.log_dir_link)
