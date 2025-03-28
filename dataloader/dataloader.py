@@ -71,7 +71,7 @@ def cutout(rgb, gt, modal_x, mask_size=25, p=0.5):
 
     # Apply the cutout
     rgb[y1:y2, x1:x2, :] = 0
-    gt[y1:y2, x1:x2] = 255  # Assuming 255 is the ignore label
+    gt[y1:y2, x1:x2] = config.background  # Assuming 255 is the ignore label
     modal_x[y1:y2, x1:x2, :] = 0
 
     return rgb, gt, modal_x
@@ -82,6 +82,9 @@ class TrainPre(object):
         self.norm_std = norm_std
 
     def __call__(self, rgb, gt, modal_x):
+        # First, ensure labels are in valid range
+        gt = np.clip(gt, 0, config.num_classes - 1)
+        
         rgb, gt, modal_x = random_mirror(rgb, gt, modal_x)
         if config.train_scale_array is not None:
             rgb, gt, modal_x, scale = random_scale(rgb, gt, modal_x, config.train_scale_array)
@@ -93,17 +96,11 @@ class TrainPre(object):
         rgb = normalize(rgb, self.norm_mean, self.norm_std)
         modal_x = normalize(modal_x, self.norm_mean, self.norm_std)
 
-        crop_size = (config.image_height, config.image_width)
-        crop_pos = generate_random_crop_pos(rgb.shape[:2], crop_size)
-
-        p_rgb, _ = random_crop_pad_to_shape(rgb, crop_pos, crop_size, 0)
-        p_gt, _ = random_crop_pad_to_shape(gt, crop_pos, crop_size, 255)
-        p_modal_x, _ = random_crop_pad_to_shape(modal_x, crop_pos, crop_size, 0)
-
-        p_rgb = p_rgb.transpose(2, 0, 1)
-        p_modal_x = p_modal_x.transpose(2, 0, 1)
+        # Convert to channel-first format (required by PyTorch)
+        rgb = rgb.transpose(2, 0, 1)
+        modal_x = modal_x.transpose(2, 0, 1)
         
-        return p_rgb, p_gt, p_modal_x
+        return rgb, gt, modal_x
 
 class ValPre(object):
     def __call__(self, rgb, gt, modal_x):
@@ -121,7 +118,10 @@ def get_train_loader(engine, dataset):
                     'class_names': config.class_names,
                     'train_source': config.train_source,
                     'eval_source': config.eval_source,
-                    'class_names': config.class_names}
+                    'class_names': config.class_names,
+                    'dataset_name': config.dataset_name,
+                    'background': config.background,
+                    'num_classes': config.num_classes}
     train_preprocess = TrainPre(config.norm_mean, config.norm_std)
 
     train_dataset = dataset(data_setting, "train", train_preprocess, config.batch_size * config.niters_per_epoch)

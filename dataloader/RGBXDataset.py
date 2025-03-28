@@ -25,6 +25,9 @@ class RGBXDataset(data.Dataset):
         self._file_names = self._get_file_names(split_name)
         self._file_length = file_length
         self.preprocess = preprocess
+        self.dataset_name = setting['dataset_name']  # Add dataset name
+        self.background = setting['background']
+        self.num_classes = setting['num_classes']
 
     def __len__(self):
         if self._file_length is not None:
@@ -106,24 +109,35 @@ class RGBXDataset(data.Dataset):
         return gt - 1 
 
     @classmethod
-    def get_class_colors(*args):
-        def uint82bin(n, count=8):
-            """returns the binary of integer n, count refers to amount of bits"""
-            return ''.join([str((n >> y) & 1) for y in range(count - 1, -1, -1)])
+    def get_class_colors(cls, dataset_name=None):
+        if dataset_name == 'PST900':
+            # Return PST900 colormap
+            return [
+                [0,0,0],        # background
+                [0,0,255],      # backpack
+                [0,255,0],      # fire extinguisher
+                [255,165,0],      # hand drill
+                [255,0,0],  # rescue randy
+            ]
+        else:
+            # Original color generation for other datasets
+            def uint82bin(n, count=8):
+                """returns the binary of integer n, count refers to amount of bits"""
+                return ''.join([str((n >> y) & 1) for y in range(count - 1, -1, -1)])
 
-        N = 41
-        cmap = np.zeros((N, 3), dtype=np.uint8)
-        for i in range(N):
-            r, g, b = 0, 0, 0
-            id = i
-            for j in range(7):
-                str_id = uint82bin(id)
-                r = r ^ (np.uint8(str_id[-1]) << (7 - j))
-                g = g ^ (np.uint8(str_id[-2]) << (7 - j))
-                b = b ^ (np.uint8(str_id[-3]) << (7 - j))
-                id = id >> 3
-            cmap[i, 0] = r
-            cmap[i, 1] = g
-            cmap[i, 2] = b
-        class_colors = cmap.tolist()
-        return class_colors
+            N = 41
+            cmap = np.zeros((N, 3), dtype=np.uint8)
+            for i in range(N):
+                r, g, b = 0, 0, 0
+                id = i
+                for j in range(7):
+                    str_id = uint82bin(id)
+                    r = r ^ (np.uint8(str_id[-1]) << (7 - j))
+                    g = g ^ (np.uint8(str_id[-2]) << (7 - j))
+                    b = b ^ (np.uint8(str_id[-3]) << (7 - j))
+                    id = id >> 3
+                cmap[i, 0] = r
+                cmap[i, 1] = g
+                cmap[i, 2] = b
+            class_colors = cmap.tolist()
+            return class_colors
