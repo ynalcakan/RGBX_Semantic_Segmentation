@@ -99,11 +99,65 @@ class berHuLoss(nn.Module):
 
         loss = torch.mean(f_delta + s_delta)
         return loss
+    
+class DiceLoss(nn.Module):
+    def __init__(self, smooth=1e-6, ignore_index=255, reduction='mean'):
+        super(DiceLoss, self).__init__()
+        self.smooth = smooth
+        self.ignore_index = ignore_index
+        self.reduction = reduction
 
+    def forward(self, preds, targets):
+        """
+        preds: Tensor of shape (batch_size, num_classes, H, W)
+        targets: Tensor of shape (batch_size, H, W)
+        """
+        # Create mask for valid pixels (not ignore_index)
+        valid_mask = (targets != self.ignore_index).float()
+        
+        # Convert predictions to probabilities
+        preds = F.softmax(preds, dim=1)
+        
+        # Create one-hot targets using F.one_hot
+        num_classes = preds.shape[1]
+        # First clamp targets to valid range [0, num_classes-1]
+        targets_valid = torch.clamp(targets, 0, num_classes-1)
+        targets_one_hot = F.one_hot(targets_valid, num_classes).permute(0, 3, 1, 2).float()
+        
+        # Apply valid mask
+        preds = preds * valid_mask.unsqueeze(1)
+        targets_one_hot = targets_one_hot * valid_mask.unsqueeze(1)
 
-class SigmoidFocalLoss(nn.Module):
+        # Calculate intersection and union
+        intersection = (preds * targets_one_hot).sum(dim=(2, 3))
+        union = preds.sum(dim=(2, 3)) + targets_one_hot.sum(dim=(2, 3))
+
+        # Calculate Dice coefficient
+        dice = (2.0 * intersection + self.smooth) / (union + self.smooth)
+        
+        # Return loss based on reduction method
+        if self.reduction == 'mean':
+            return 1 - dice.mean()
+        elif self.reduction == 'sum':
+            return 1 - dice.sum()
+        else:  # 'none'
+            return 1 - dice
+
+class DiceCELoss(nn.Module):
+    def __init__(self, alpha=0.5, ignore_index=255, reduction='mean'):
+        super(DiceCELoss, self).__init__()
+        self.alpha = alpha  # Weight between Dice and CE
+        self.dice = DiceLoss(ignore_index=ignore_index, reduction=reduction)
+        self.ce = nn.CrossEntropyLoss(ignore_index=ignore_index, reduction=reduction)
+
+    def forward(self, preds, targets):
+        dice_loss = self.dice(preds, targets)
+        ce_loss = self.ce(preds, targets)
+        return self.alpha * dice_loss + (1 - self.alpha) * ce_loss
+
+class FocalLoss(nn.Module):
     def __init__(self, ignore_label, gamma=2.0, alpha=0.25, reduction='mean'):
-        super(SigmoidFocalLoss, self).__init__()
+        super(FocalLoss, self).__init__()
         self.ignore_label = ignore_label
         self.gamma = gamma
         self.alpha = alpha
@@ -121,10 +175,10 @@ class SigmoidFocalLoss(nn.Module):
         target = torch.clamp(target, 0, c - 1)
         
         # Convert target to one-hot encoding
-        target_one_hot = F.one_hot(target, num_classes=c).float().permute(0, 2, 1)
+        target_one_hot = F.one_hot(target, num_classes=c).permute(0, 2, 1).float()
         
         # Calculate probabilities
-        probs = torch.sigmoid(pred)
+        probs = torch.softmax(pred, dim=1)
         pt = torch.where(target_one_hot == 1, probs, 1 - probs)
         
         # Calculate focal weight
@@ -137,11 +191,11 @@ class SigmoidFocalLoss(nn.Module):
         loss = -alpha_weight * focal_weight * torch.log(pt + 1e-8)
         
         # Apply valid mask
-        loss = loss * valid_mask.unsqueeze(1)
+        loss = loss * valid_mask.unsqueeze(1).expand_as(loss)
         
         # Reduce loss
         if self.reduction == 'mean':
-            return loss.sum() / (valid_mask.sum() + 1e-8)
+            return loss.sum() / (valid_mask.unsqueeze(1).sum() + 1e-8)
         elif self.reduction == 'sum':
             return loss.sum()
         else:  # 'none'
