@@ -26,6 +26,11 @@ class SegEvaluator(Evaluator):
         modal_x = data['modal_x']
         name = data['fn']
         dataset_name = config.dataset_name
+
+        # Transpose image from CHW (PyTorch format) back to HWC (OpenCV format)
+        # as sliding_eval_rgbX expects HWC format for cv2.resize
+        img = img.transpose(1, 2, 0)
+
         pred = self.sliding_eval_rgbX(img, modal_x, config.eval_crop_size, config.eval_stride_rate, device)
         hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
         results_dict = {'hist': hist_tmp, 'labeled': labeled_tmp, 'correct': correct_tmp}

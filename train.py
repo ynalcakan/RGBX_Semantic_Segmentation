@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
+from torch.cuda.amp import autocast, GradScaler
 
 from config import config
 from dataloader.dataloader import get_train_loader
@@ -20,7 +21,7 @@ from utils.lr_policy import WarmUpPolyLR, StepLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, FocalLoss, TopologyAwareLoss, DiceCELoss
 
 from tensorboardX import SummaryWriter
 
@@ -43,11 +44,18 @@ with Engine(custom_parser=parser) as engine:
     # data loader
     train_loader, train_sampler = get_train_loader(engine, RGBXDataset)
 
+    logger.info(f"Dataset: {config.dataset_name}")
+
     if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
         tb_dir = config.tb_dir + '/{}'.format(time.strftime("%b%d_%d-%H-%M", time.localtime()))
         generate_tb_dir = config.tb_dir + '/tb'
         tb = SummaryWriter(log_dir=tb_dir)
         engine.link_tb(tb_dir, generate_tb_dir)
+
+    # Initialize gradient scaler for mixed precision training
+    scaler = GradScaler(enabled=config.use_mixed_precision)
+    if config.use_mixed_precision:
+        logger.info("Using mixed precision training")
 
     # config network and criterion
     FL_gamma = config.FL_gamma
@@ -59,12 +67,14 @@ with Engine(custom_parser=parser) as engine:
         BatchNorm2d = nn.BatchNorm2d
     
     # Initialize criterion with correct background value
-    if config.criterion == 'SigmoidFocalLoss':
-        criterion = SigmoidFocalLoss(ignore_label=config.background, gamma=config.FL_gamma, alpha=config.FL_alpha, reduction='mean')
+    if config.criterion == 'FocalLoss':
+        criterion = FocalLoss(ignore_label=config.background, gamma=config.FL_gamma, alpha=config.FL_alpha, reduction='mean')
     elif config.criterion == 'CrossEntropyLoss':
         criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
     elif config.criterion == 'BalanceLoss':
         criterion = BalanceLoss(ignore_index=config.background, reduction='mean')
+    elif config.criterion == 'DiceCELoss':
+        criterion = DiceCELoss(ignore_index=config.background, reduction='mean')
     elif config.criterion == 'RCELoss':
         criterion = RCELoss(ignore_index=config.background, reduction='mean')
     elif config.criterion == 'berHuLoss':
@@ -74,7 +84,7 @@ with Engine(custom_parser=parser) as engine:
     elif config.criterion == 'CE_Focal':
         # multiple loss function
         criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
-        criterion2 = SigmoidFocalLoss(ignore_label=config.background, gamma=config.FL_gamma, alpha=config.FL_alpha, reduction='mean')
+        criterion2 = FocalLoss(ignore_label=config.background, gamma=config.FL_gamma, alpha=config.FL_alpha, reduction='mean')
         criterion = (criterion1, criterion2)
     elif config.criterion == 'TopologyAwareCE':
         # Combine CrossEntropy with Topology loss
@@ -83,6 +93,10 @@ with Engine(custom_parser=parser) as engine:
         criterion = (criterion1, criterion2)
     else:
         raise NotImplementedError
+    
+    logger.info(f"Loss Function: {config.criterion}")
+    logger.info(f"Base Learning Rate: {config.lr}")
+    logger.info(f"Weight Decay: {config.weight_decay}")
 
     # Store fixed samples for visualization
     fixed_samples = None
@@ -166,15 +180,25 @@ with Engine(custom_parser=parser) as engine:
             modal_xs = modal_xs.cuda(non_blocking=True)
 
             aux_rate = 0.2
-            loss = model(imgs, modal_xs, gts)
+            
+            # Use mixed precision autocast
+            with autocast(enabled=config.use_mixed_precision):
+                loss = model(imgs, modal_xs, gts)
 
             # reduce the whole loss over multi-gpu
             if engine.distributed:
                 reduce_loss = all_reduce_tensor(loss, world_size=engine.world_size)
             
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            
+            # Use scaler for mixed precision backward and optimization
+            if config.use_mixed_precision:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             current_idx = (epoch- 1) * config.niters_per_epoch + idx 
             lr = lr_policy.get_lr(current_idx)
@@ -203,7 +227,7 @@ with Engine(custom_parser=parser) as engine:
                 # Log learning rate every 100 iterations
                 if idx % 100 == 0:
                     tb.add_scalar('train/learning_rate', lr, current_idx)
-                
+                """
                 # Visualize sample predictions (once per epoch)
                 if idx == 0:
                     with torch.no_grad():
@@ -276,16 +300,19 @@ with Engine(custom_parser=parser) as engine:
                                     pred_vis[c][mask] = colormap[i][c]
                             tb.add_image(f'sample_{b}/prediction',
                                        pred_vis, epoch)
+                """
 
-            if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
-                tb.add_scalar('train/epoch_loss', sum_loss / len(pbar), epoch)
+        # Log average loss for the epoch
+        if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
+            tb.add_scalar('train/epoch_loss', sum_loss / len(pbar), epoch)
 
-            if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
-                if engine.distributed and (engine.local_rank == 0):
-                    engine.save_and_link_checkpoint(config.checkpoint_dir,
-                                                    config.log_dir,
-                                                    config.log_dir_link)
-                elif not engine.distributed:
-                    engine.save_and_link_checkpoint(config.checkpoint_dir,
-                                                    config.log_dir,
-                                                    config.log_dir_link)
+        # Save checkpoint at the end of the epoch if it meets the criteria
+        if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
+            if engine.distributed and (engine.local_rank == 0):
+                engine.save_and_link_checkpoint(config.checkpoint_dir,
+                                            config.log_dir,
+                                            config.log_dir_link)
+            elif not engine.distributed:
+                engine.save_and_link_checkpoint(config.checkpoint_dir,
+                                            config.log_dir,
+                                            config.log_dir_link)
