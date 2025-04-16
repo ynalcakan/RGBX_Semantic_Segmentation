@@ -117,6 +117,33 @@ class EncoderDecoder(nn.Module):
             self.channels = [32, 64, 160, 256]
             from .encoders.dual_segformer_w_aspp import mit_b0 as backbone
             self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'mit_b5_w_ef_aspp':
+            logger.info('Using backbone: Segformer-B5 with eASPP')
+            from .encoders.dual_segformer_w_ef_aspp import mit_b5 as backbone
+            self.channels = [96, 192, 384, 768]
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'mit_b4_w_ef_aspp':
+            logger.info('Using backbone: Segformer-B4 with eASPP')
+            from .encoders.dual_segformer_w_ef_aspp import mit_b4 as backbone
+            self.channels = [96, 192, 384, 768]
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'mit_b3_w_ef_aspp':
+            logger.info('Using backbone: Segformer-B3 with eASPP')
+            from .encoders.dual_segformer_w_ef_aspp import mit_b3 as backbone
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'mit_b2_w_ef_aspp':
+            logger.info('Using backbone: Segformer-B2 with eASPP')
+            from .encoders.dual_segformer_w_ef_aspp import mit_b2 as backbone
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'mit_b1_w_ef_aspp':
+            logger.info('Using backbone: Segformer-B1 with eASPP')
+            from .encoders.dual_segformer_w_ef_aspp import mit_b0 as backbone
+            self.backbone = backbone(norm_fuse=norm_layer)
+        elif cfg.backbone == 'mit_b0_w_ef_aspp':
+            logger.info('Using backbone: Segformer-B0 with eASPP')
+            self.channels = [32, 64, 160, 256]
+            from .encoders.dual_segformer_w_ef_aspp import mit_b0 as backbone
+            self.backbone = backbone(norm_fuse=norm_layer)
         else:
             logger.info('Using backbone: Segformer-B2')
             from .encoders.dual_segformer import mit_b2 as backbone
