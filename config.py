@@ -53,6 +53,13 @@ C.decoder_embed_dim = 512
 C.optimizer = 'AdamW'
 C.criterion = 'CrossEntropyLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss
 
+# Fusion module selection
+C.feature_rectify_module = 'FRM'    # Possibilities: FRM, IFRM
+C.feature_fusion_module = 'FFM'    # Possibilities: FFM, IFFM
+
+# Enable mixed precision training to reduce GPU memory usage and increase speed
+C.use_mixed_precision = False    # Set to True to enable mixed precision training
+
 # SigmoidFocalLoss parameters
 C.FL_gamma = 4.0     
 C.FL_alpha = 0.25
@@ -63,7 +70,7 @@ C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 0.01
 C.batch_size = 8
-C.nepochs = 500
+C.nepochs = 200
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -76,7 +83,7 @@ C.bn_momentum = 0.1
 """Eval Config"""
 C.eval_iter = 25
 C.eval_stride_rate = 2 / 3
-C.eval_scale_array = [1] # [0.75, 1, 1.25] # 
+C.eval_scale_array = [0.75, 1, 1.25] # 
 C.eval_flip = False # True # 
 C.eval_crop_size = [480, 640] # [height weight]
 
@@ -91,9 +98,9 @@ def add_path(path):
 add_path(osp.join(C.root_dir))
 
 if C.criterion == 'SigmoidFocalLoss':
-    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.feature_rectify_module + '_' + C.feature_fusion_module + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
 else:
-    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion + '_ssl_thermal'
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.feature_rectify_module + '_' + C.feature_fusion_module + '_' + C.criterion
 
 C.log_dir = osp.abspath(log_path)
 C.tb_dir = osp.abspath(osp.join(C.log_dir, "tb"))
