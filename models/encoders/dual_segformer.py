@@ -11,6 +11,7 @@ from ..net_utils import ImprovedFeatureFusionModule as IFFM
 import math
 import time
 from engine.logger import get_logger
+from config import config
 
 logger = get_logger()
   
@@ -311,17 +312,33 @@ class RGBXTransformer(nn.Module):
 
         cur += depths[3]
 
+        # Select Feature Rectify Module based on config
+        if config.feature_rectify_module == 'FRM':
+            FRModule = FRM
+            logger.info("Using FRM (Feature Rectify Module)")
+        else:  # 'IFRM'
+            FRModule = IFRM
+            logger.info("Using IFRM (Improved Feature Rectify Module)")
+            
+        # Select Feature Fusion Module based on config
+        if config.feature_fusion_module == 'FFM':
+            FFModule = FFM
+            logger.info("Using FFM (Feature Fusion Module)")
+        else:  # 'IFFM'
+            FFModule = IFFM
+            logger.info("Using IFFM (Improved Feature Fusion Module)")
+
         self.FRMs = nn.ModuleList([
-                    IFRM(dim=embed_dims[0], reduction=1),
-                    IFRM(dim=embed_dims[1], reduction=1),
-                    IFRM(dim=embed_dims[2], reduction=1),
-                    IFRM(dim=embed_dims[3], reduction=1)])
+                    FRModule(dim=embed_dims[0], reduction=1),
+                    FRModule(dim=embed_dims[1], reduction=1),
+                    FRModule(dim=embed_dims[2], reduction=1),
+                    FRModule(dim=embed_dims[3], reduction=1)])
 
         self.FFMs = nn.ModuleList([
-                    IFFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
-                    IFFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
-                    IFFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
-                    IFFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
+                    FFModule(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
+                    FFModule(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
+                    FFModule(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
+                    FFModule(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
 
         self.apply(self._init_weights)
 
