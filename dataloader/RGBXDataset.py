@@ -46,6 +46,10 @@ class RGBXDataset(data.Dataset):
         # Check the following settings if necessary
         rgb = self._open_image(rgb_path, cv2.COLOR_BGR2RGB)
 
+        # Ensure rgb is 3 channels, convert if grayscale
+        if len(rgb.shape) == 2:
+            rgb = cv2.cvtColor(rgb, cv2.COLOR_GRAY2RGB)
+
         gt = self._open_image(gt_path, cv2.IMREAD_GRAYSCALE, dtype=np.uint8)
         if self._transform_gt:
             gt = self._gt_transform(gt) 

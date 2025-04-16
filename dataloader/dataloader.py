@@ -11,7 +11,6 @@ def random_mirror(rgb, gt, modal_x):
         rgb = cv2.flip(rgb, 1)
         gt = cv2.flip(gt, 1)
         modal_x = cv2.flip(modal_x, 1)
-
     return rgb, gt, modal_x
 
 def random_scale(rgb, gt, modal_x, scales):
@@ -21,8 +20,15 @@ def random_scale(rgb, gt, modal_x, scales):
     rgb = cv2.resize(rgb, (sw, sh), interpolation=cv2.INTER_LINEAR)
     gt = cv2.resize(gt, (sw, sh), interpolation=cv2.INTER_NEAREST)
     modal_x = cv2.resize(modal_x, (sw, sh), interpolation=cv2.INTER_LINEAR)
-
     return rgb, gt, modal_x, scale
+
+def ensure_size(rgb, gt, modal_x, height, width):
+    """Resize images to the desired size to ensure consistent batching"""
+    if rgb.shape[0] != height or rgb.shape[1] != width:
+        rgb = cv2.resize(rgb, (width, height), interpolation=cv2.INTER_LINEAR)
+        gt = cv2.resize(gt, (width, height), interpolation=cv2.INTER_NEAREST)
+        modal_x = cv2.resize(modal_x, (width, height), interpolation=cv2.INTER_LINEAR)
+    return rgb, gt, modal_x
 
 def random_color_jitter(rgb, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1):
     # Convert to HSV (Hue, Saturation, Value) color space
@@ -93,6 +99,9 @@ class TrainPre(object):
         rgb = random_gaussian_blur(rgb)
         rgb, gt, modal_x = cutout(rgb, gt, modal_x)
 
+        # Ensure all images are resized to the same dimensions before batching
+        rgb, gt, modal_x = ensure_size(rgb, gt, modal_x, config.image_height, config.image_width)
+
         rgb = normalize(rgb, self.norm_mean, self.norm_std)
         modal_x = normalize(modal_x, self.norm_mean, self.norm_std)
 
@@ -104,6 +113,17 @@ class TrainPre(object):
 
 class ValPre(object):
     def __call__(self, rgb, gt, modal_x):
+        # Ensure all images are resized to the same dimensions before batching
+        rgb, gt, modal_x = ensure_size(rgb, gt, modal_x, config.image_height, config.image_width)
+        
+        # Normalize and convert to channel-first format
+        rgb = normalize(rgb, config.norm_mean, config.norm_std)
+        modal_x = normalize(modal_x, config.norm_mean, config.norm_std)
+        
+        # Convert to channel-first format (required by PyTorch)
+        rgb = rgb.transpose(2, 0, 1)
+        modal_x = modal_x.transpose(2, 0, 1)
+        
         return rgb, gt, modal_x
 
 def get_train_loader(engine, dataset):
