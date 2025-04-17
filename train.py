@@ -27,8 +27,6 @@ from tensorboardX import SummaryWriter
 parser = argparse.ArgumentParser()
 logger = get_logger()
 
-os.environ['MASTER_PORT'] = '169710'
-
 with Engine(custom_parser=parser) as engine:
     args = parser.parse_args()
 
@@ -40,14 +38,17 @@ with Engine(custom_parser=parser) as engine:
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
 
-    # data loader
+        # data loader
     train_loader, train_sampler = get_train_loader(engine, RGBXDataset)
-
+    
     if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
         tb_dir = config.tb_dir + '/{}'.format(time.strftime("%b%d_%d-%H-%M", time.localtime()))
         generate_tb_dir = config.tb_dir + '/tb'
         tb = SummaryWriter(log_dir=tb_dir)
         engine.link_tb(tb_dir, generate_tb_dir)
+    
+    else:
+        tb = None # Ensure tb is defined even if not initialized
 
     # config network and criterion
     FL_gamma = config.FL_gamma
@@ -96,14 +97,14 @@ with Engine(custom_parser=parser) as engine:
     else:
         raise NotImplementedError
 
-
     if engine.distributed:
         BatchNorm2d = nn.SyncBatchNorm
     else:
         BatchNorm2d = nn.BatchNorm2d
     
-    model=segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
     
+    model=segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
+
     # group weight and config optimizer
     base_lr = config.lr
     if engine.distributed:
@@ -157,12 +158,13 @@ with Engine(custom_parser=parser) as engine:
 
     if engine.continue_state_object:
         engine.restore_checkpoint()
-
-    optimizer.zero_grad()
-    model.train()
-    logger.info('begin trainning:')
+    else:
+        optimizer.zero_grad()
+        model.train()
+        logger.info('begin trainning:')
     
     for epoch in range(engine.state.epoch, config.nepochs+1):
+        logger.info(f"--> [Epoch {epoch}] Starting...")
         if engine.distributed:
             train_sampler.set_epoch(epoch)
         bar_format = '{desc}[{elapsed}<{remaining},{rate_fmt}]'
@@ -198,7 +200,6 @@ with Engine(custom_parser=parser) as engine:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
             current_idx = (epoch- 1) * config.niters_per_epoch + idx 
             lr = lr_policy.get_lr(current_idx)
 

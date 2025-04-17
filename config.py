@@ -19,7 +19,7 @@ C.abs_dir = osp.realpath(".")
 # Dataset config
 """Dataset Path"""
 C.dataset_name = 'MFNet'
-C.dataset_path = osp.join(C.root_dir, 'datasets', 'MFNet')
+C.dataset_path = osp.join(C.root_dir, '../Datasets', 'MFNet')
 C.rgb_root_folder = osp.join(C.dataset_path, 'RGB')
 C.rgb_format = '.png'
 C.gt_root_folder = osp.join(C.dataset_path, 'Label')
@@ -79,10 +79,11 @@ C.weight_decay = 0.01  # Reduce slightly from 0.015 for cosine scheduler
 
 """Train Config"""
 C.momentum = 0.9
-C.batch_size = 12 # 8
-C.nepochs = 450
+C.weight_decay = 0.01
+C.batch_size = 8
+C.nepochs = 5
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
-C.num_workers = 16
+C.num_workers = 0
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
 
 # Data augmentation options
