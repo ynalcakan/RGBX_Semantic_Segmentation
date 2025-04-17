@@ -45,17 +45,21 @@ class Engine(object):
 
         self.continue_state_object = self.args.continue_fpath
 
-        if 'WORLD_SIZE' in os.environ:
-            self.distributed = int(os.environ['WORLD_SIZE']) > 1
+        # Check if WORLD_SIZE env var exists to determine if distributed mode is used
+        self.distributed = 'WORLD_SIZE' in os.environ
         
         if self.distributed:
-            self.local_rank = self.args.local_rank
+            # Get local rank from env var set by torchrun/launch
+            self.local_rank = int(os.environ.get('LOCAL_RANK', 0)) 
             self.world_size = int(os.environ['WORLD_SIZE'])
             torch.cuda.set_device(self.local_rank)
-            os.environ['MASTER_PORT'] = self.args.port
-            dist.init_process_group(backend="nccl", world_size=self.world_size, init_method='env://')
-            self.devices = [i for i in range(self.world_size)]
+            # Use args.port for MASTER_PORT if needed, or rely on torchrun defaults
+            master_port = os.environ.get('MASTER_PORT', self.args.port)
+            os.environ['MASTER_PORT'] = master_port 
+            # Ensure init_method uses env:// which torchrun sets up
+            dist.init_process_group(backend="nccl", init_method='env://') 
         else:
+            # This block is now only executed when not using torchrun/launch
             self.devices = parse_devices(self.args.devices)
 
 

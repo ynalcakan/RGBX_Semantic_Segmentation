@@ -19,7 +19,7 @@ C.abs_dir = osp.realpath(".")
 # Dataset config
 """Dataset Path"""
 C.dataset_name = 'MFNet'
-C.dataset_path = osp.join(C.root_dir, 'datasets', 'MFNet')
+C.dataset_path = osp.join(C.root_dir, '../Datasets', 'MFNet')
 C.rgb_root_folder = osp.join(C.dataset_path, 'RGB')
 C.rgb_format = '.png'
 C.gt_root_folder = osp.join(C.dataset_path, 'Label')
@@ -37,6 +37,11 @@ C.num_train_imgs = 1176
 C.num_eval_imgs = 393
 C.num_classes = 9
 C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Guardrail", "Color Cone", "Bump"]
+
+# Demo image path (for visualization purposes)
+C.demo_image_path = "segmentation.jpg"  # Default fallback image
+C.demo_thermal_path = None  # If None, a synthetic thermal image will be created from the RGB image
+
 
 """Image Config"""
 C.background = 255
@@ -63,9 +68,9 @@ C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 0.01
 C.batch_size = 8
-C.nepochs = 500
+C.nepochs = 5
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
-C.num_workers = 16
+C.num_workers = 0
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
 C.warm_up_epoch = 10
 
@@ -93,7 +98,7 @@ add_path(osp.join(C.root_dir))
 if C.criterion == 'SigmoidFocalLoss':
     log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
 else:
-    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion + '_ssl_thermal'
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion 
 
 C.log_dir = osp.abspath(log_path)
 C.tb_dir = osp.abspath(osp.join(C.log_dir, "tb"))

@@ -27,8 +27,6 @@ from tensorboardX import SummaryWriter
 parser = argparse.ArgumentParser()
 logger = get_logger()
 
-os.environ['MASTER_PORT'] = '169710'
-
 with Engine(custom_parser=parser) as engine:
     args = parser.parse_args()
 
@@ -40,14 +38,17 @@ with Engine(custom_parser=parser) as engine:
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
 
-    # data loader
+        # data loader
     train_loader, train_sampler = get_train_loader(engine, RGBXDataset)
-
+    
     if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
         tb_dir = config.tb_dir + '/{}'.format(time.strftime("%b%d_%d-%H-%M", time.localtime()))
         generate_tb_dir = config.tb_dir + '/tb'
         tb = SummaryWriter(log_dir=tb_dir)
         engine.link_tb(tb_dir, generate_tb_dir)
+    
+    else:
+        tb = None # Ensure tb is defined even if not initialized
 
     # config network and criterion
     FL_gamma = config.FL_gamma
@@ -79,30 +80,27 @@ with Engine(custom_parser=parser) as engine:
     else:
         raise NotImplementedError
 
-
     if engine.distributed:
         BatchNorm2d = nn.SyncBatchNorm
     else:
         BatchNorm2d = nn.BatchNorm2d
     
-    model=segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
     
+    model=segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
+
     # group weight and config optimizer
     base_lr = config.lr
-    if engine.distributed:
-        base_lr = config.lr
+    params_list = []
+    params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
 
-        params_list = []
-        params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
-        
-        if config.optimizer == 'AdamW':
-            optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
-        elif config.optimizer == 'SGDM':
-            optimizer = torch.optim.SGD(params_list, lr=base_lr, momentum=config.momentum, weight_decay=config.weight_decay)
-        elif config.optimizer == 'LBFGS':
-            optimizer = torch.optim.LBFGS(params_list, lr=base_lr, max_iter=20, max_eval=None, tolerance_grad=1e-7, tolerance_change=1e-9, history_size=100, line_search_fn=None)
-        else:
-            raise NotImplementedError
+    if config.optimizer == 'AdamW':
+        optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
+    elif config.optimizer == 'SGDM':
+        optimizer = torch.optim.SGD(params_list, lr=base_lr, momentum=config.momentum, weight_decay=config.weight_decay)
+    elif config.optimizer == 'LBFGS':
+        optimizer = torch.optim.LBFGS(params_list, lr=base_lr, max_iter=20, max_eval=None, tolerance_grad=1e-7, tolerance_change=1e-9, history_size=100, line_search_fn=None)
+    else:
+        raise NotImplementedError
 
     # config lr policy
     total_iteration = config.nepochs * config.niters_per_epoch
@@ -122,12 +120,13 @@ with Engine(custom_parser=parser) as engine:
 
     if engine.continue_state_object:
         engine.restore_checkpoint()
-
-    optimizer.zero_grad()
-    model.train()
-    logger.info('begin trainning:')
+    else:
+        optimizer.zero_grad()
+        model.train()
+        logger.info('begin trainning:')
     
     for epoch in range(engine.state.epoch, config.nepochs+1):
+        logger.info(f"--> [Epoch {epoch}] Starting...")
         if engine.distributed:
             train_sampler.set_epoch(epoch)
         bar_format = '{desc}[{elapsed}<{remaining},{rate_fmt}]'
@@ -159,7 +158,6 @@ with Engine(custom_parser=parser) as engine:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
             current_idx = (epoch- 1) * config.niters_per_epoch + idx 
             lr = lr_policy.get_lr(current_idx)
 
