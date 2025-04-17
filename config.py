@@ -63,7 +63,7 @@ C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 0.01
 C.batch_size = 8
-C.nepochs = 500
+C.nepochs = 200
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -93,7 +93,7 @@ add_path(osp.join(C.root_dir))
 if C.criterion == 'SigmoidFocalLoss':
     log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
 else:
-    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion + '_ssl_thermal'
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_IFRM' + '_' + C.criterion
 
 C.log_dir = osp.abspath(log_path)
 C.tb_dir = osp.abspath(osp.join(C.log_dir, "tb"))
