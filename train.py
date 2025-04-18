@@ -111,7 +111,7 @@ with Engine(custom_parser=parser) as engine:
         if torch.cuda.is_available():
             model.cuda()
             model = DistributedDataParallel(model, device_ids=[engine.local_rank], 
-                                            output_device=engine.local_rank, find_unused_parameters=False)
+                                           output_device=engine.local_rank, find_unused_parameters=False)
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
@@ -143,12 +143,14 @@ with Engine(custom_parser=parser) as engine:
             imgs = minibatch['data']
             gts = minibatch['label']
             modal_xs = minibatch['modal_x']
-
+            
+            # No need to handle external graph_data as it's now integrated in the model
+            
             imgs = imgs.cuda(non_blocking=True)
             gts = gts.cuda(non_blocking=True)
             modal_xs = modal_xs.cuda(non_blocking=True)
 
-            aux_rate = 0.2
+            # Pass inputs to model (graph processing is now integrated)
             loss = model(imgs, modal_xs, gts)
 
             # reduce the whole loss over multi-gpu

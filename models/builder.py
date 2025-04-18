@@ -8,6 +8,7 @@ from functools import partial
 from utils.loss_opr import Mask2FormerLoss
 
 from engine.logger import get_logger
+from .encoders.graph_attention import SegformerGAT
 
 logger = get_logger()
 
@@ -17,6 +18,8 @@ class EncoderDecoder(nn.Module):
         self.channels = [64, 128, 320, 512]
         self.norm_layer = norm_layer
         self.cfg = cfg
+        self.use_graph = getattr(cfg, 'create_graph', False)
+        
         # import backbone and decoder
         if cfg.backbone == 'swin_s':
             logger.info('Using backbone: Swin-Transformer-small')
@@ -134,6 +137,38 @@ class EncoderDecoder(nn.Module):
             from .decoders.fcnhead import FCNHead
             self.decode_head = FCNHead(in_channels=self.channels[-1], kernel_size=3, num_classes=cfg.num_classes, norm_layer=norm_layer)
 
+        # Initialize SegformerGAT if graph-based processing is enabled
+        if self.use_graph:
+            logger.info('Initializing SegformerGAT for graph-based segmentation')
+            
+            # Graph processing features
+            in_channels = self.channels[-1]  # Use the last level channel dimension from backbone
+            hidden_channels = getattr(cfg, 'gat_hidden_dim', 512)  # Match backbone's dimension
+            out_channels = cfg.num_classes  # Output channels match number of classes
+            num_layers = getattr(cfg, 'gat_num_layers', 2)
+            heads = getattr(cfg, 'gat_heads', 4)
+            dropout = getattr(cfg, 'gat_dropout', 0.1)
+            use_gatv2 = getattr(cfg, 'use_gatv2', True)
+            
+            # Create SegformerGAT module
+            self.graph_processor = SegformerGAT(
+                segformer_model=self.backbone,
+                in_channels=in_channels,
+                hidden_channels=hidden_channels,
+                out_channels=out_channels,
+                num_layers=num_layers,
+                heads=heads,
+                dropout=dropout,
+                use_gatv2=use_gatv2
+            )
+            
+            # Fusion mode
+            self.fusion_mode = getattr(cfg, 'graph_fusion_mode', 'add')
+            
+            # For weighted fusion, initialize weight
+            if self.fusion_mode == 'weighted':
+                self.fusion_weight = nn.Parameter(torch.tensor(0.5))
+
         if cfg.decoder == 'mask2former':
             self.criterion = Mask2FormerLoss(num_classes=cfg.num_classes, ignore_index=255)
         else:
@@ -154,10 +189,51 @@ class EncoderDecoder(nn.Module):
             init_weight(self.aux_head, nn.init.kaiming_normal_,
                 self.norm_layer, cfg.bn_eps, cfg.bn_momentum,
                 mode='fan_in', nonlinearity='relu')
-
+        if self.use_graph:
+            # Initialize graph processor weights
+            for name, m in self.graph_processor.named_modules():
+                if isinstance(m, (nn.Conv2d, nn.Linear)):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+                elif isinstance(m, (nn.BatchNorm2d, nn.LayerNorm)):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+            
+            # Initialize fusion layer if it exists (for backward compatibility)
+            # Note: In the new design, fusion_layer is created dynamically during forward pass
+            if self.fusion_mode == 'concat' and hasattr(self, 'fusion_layer'):
+                init_weight(self.fusion_layer, nn.init.kaiming_normal_,
+                        self.norm_layer, cfg.bn_eps, cfg.bn_momentum,
+                        mode='fan_in', nonlinearity='relu')
+                
     def encode_decode(self, rgb, modal_x):
+        # Get device from input tensor
+        device = rgb.device
         orisize = rgb.shape
+        
+        # Get backbone features
         x = self.backbone(rgb, modal_x)
+        
+        # Process with graph-based enhancement if enabled
+        if self.use_graph:
+            # Get enhanced features from graph processor
+            graph_features = self.graph_processor(rgb, modal_x)
+            
+            # Enhanced features can be used in place of or in addition to the last level features
+            # Replace or enhance the last level features based on fusion mode
+            if self.fusion_mode == 'weighted':
+                # Weighted fusion of backbone and graph features
+                x[-1] = (self.fusion_weight * x[-1] + (1 - self.fusion_weight) * graph_features).contiguous()
+            elif self.fusion_mode == 'add':
+                # Simple addition of backbone and graph features
+                x[-1] = (x[-1] + graph_features).contiguous()
+            else:
+                # Default to concatenation - no direct replacement
+                # For modalities like concat, custom handling would be implemented
+                pass
+        
+        # Process with standard decoder using the enhanced features
         out = self.decode_head.forward(x)
         
         if isinstance(out, dict):  # For Mask2Former
@@ -171,15 +247,15 @@ class EncoderDecoder(nn.Module):
             
             # Return the dictionary format for loss computation
             return {
-                'pred_logits': logits,
-                'pred_masks': masks
+                'pred_logits': logits.to(device),
+                'pred_masks': masks.to(device)
             }
         
         # For other decoders
-        out = F.interpolate(out, size=orisize[2:], mode='bilinear', align_corners=False)
+        out = F.interpolate(out, size=orisize[2:], mode='bilinear', align_corners=False).to(device)
         if self.aux_head:
             aux_fm = self.aux_head(x[self.aux_index])
-            aux_fm = F.interpolate(aux_fm, size=orisize[2:], mode='bilinear', align_corners=False)
+            aux_fm = F.interpolate(aux_fm, size=orisize[2:], mode='bilinear', align_corners=False).to(device)
             return out, aux_fm
         return out
 
@@ -188,6 +264,7 @@ class EncoderDecoder(nn.Module):
             out, aux_fm = self.encode_decode(rgb, modal_x)
         else:
             out = self.encode_decode(rgb, modal_x)
+        
         if label is not None:
             if isinstance(self.criterion, tuple):
                 loss = self.criterion[0](out, label.long()) + 0.2 * self.criterion[1](out, label.long())

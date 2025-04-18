@@ -3,6 +3,8 @@ from pickletools import uint8
 import cv2
 import torch
 import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
 
 import torch.utils.data as data
 
@@ -25,6 +27,9 @@ class RGBXDataset(data.Dataset):
         self._file_names = self._get_file_names(split_name)
         self._file_length = file_length
         self.preprocess = preprocess
+        
+        # Note: Graph creation is now handled directly in the model
+        # using segformer features, so we don't need separate graph creation here
 
     def __len__(self):
         if self._file_length is not None:
@@ -51,7 +56,7 @@ class RGBXDataset(data.Dataset):
             x = self._open_image(x_path, cv2.IMREAD_GRAYSCALE)
             x = cv2.merge([x, x, x])
         else:
-            x =  self._open_image(x_path, cv2.COLOR_BGR2RGB)
+            x = self._open_image(x_path, cv2.COLOR_BGR2RGB)
         
         if self.preprocess is not None:
             rgb, gt, x = self.preprocess(rgb, gt, x)
@@ -62,7 +67,7 @@ class RGBXDataset(data.Dataset):
             x = torch.from_numpy(np.ascontiguousarray(x)).float()
 
         output_dict = dict(data=rgb, label=gt, modal_x=x, fn=str(item_name), n=len(self._file_names))
-
+        
         return output_dict
 
     def _get_file_names(self, split_name):

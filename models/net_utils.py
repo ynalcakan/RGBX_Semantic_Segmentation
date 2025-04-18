@@ -128,6 +128,10 @@ class FeatureRectifyModule(nn.Module):
         self.lambda_s = lambda_s
         self.channel_weights = ChannelWeights(dim=dim, reduction=reduction)
         self.spatial_weights = SpatialWeights(dim=dim, reduction=reduction)
+        
+        # Store the original features for later access by graph module
+        self.rgb_features = None
+        self.x_features = None
     
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -145,11 +149,15 @@ class FeatureRectifyModule(nn.Module):
                 m.bias.data.zero_()
     
     def forward(self, x1, x2):
+        # Store the input features for later access
+        self.rgb_features = x1.detach()
+        self.x_features = x2.detach()
+        
         channel_weights = self.channel_weights(x1, x2)
         spatial_weights = self.spatial_weights(x1, x2)
         out_x1 = x1 + self.lambda_c * channel_weights[1] * x2 + self.lambda_s * spatial_weights[1] * x2
         out_x2 = x2 + self.lambda_c * channel_weights[0] * x1 + self.lambda_s * spatial_weights[0] * x1
-        return out_x1, out_x2 
+        return out_x1, out_x2
 
 
 class ImprovedFeatureRectifyModule(nn.Module):

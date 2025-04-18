@@ -5,6 +5,8 @@ import time
 import numpy as np
 from easydict import EasyDict as edict
 import argparse
+from torch.nn.parallel import DistributedDataParallel
+import torch
 
 C = edict()
 config = C
@@ -38,6 +40,30 @@ C.num_eval_imgs = 393
 C.num_classes = 9
 C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Guardrail", "Color Cone", "Bump"]
 
+# Graph creation parameters
+C.create_graph = True  # Enable graph creation
+C.feature_dim = 512  # Node feature dimension
+C.gat_hidden_dim = 512  # GAT hidden dimension
+C.gat_num_layers = 2  # Number of GAT layers
+C.gat_heads = 4  # Number of attention heads per layer
+C.gat_dropout = 0.1  # Dropout rate for GAT
+C.use_gatv2 = True  # Use GATv2 instead of GAT
+C.graph_fusion_mode = 'weighted'  # Options: 'add', 'weighted', 'concat'
+
+# Hierarchical graph parameters
+C.use_hierarchical_graph = True  # Whether to use hierarchical graph structure based on patch pyramid
+C.inter_level_edges = True       # Whether to add edges between different levels of the hierarchy
+
+# Cross-attention fusion parameters
+C.cross_attn_dim = 64  # Hidden dimension in cross-attention
+C.cross_attn_heads = 4  # Number of attention heads in cross-attention
+C.cross_attn_window_size = 8  # Window size for efficient attention
+
+# Feature extractor configuration
+C.feature_extractor = 'SimpleCNN'  # Options: 'SimpleCNN', 'ResNet', 'MobileNet', 'ViT'
+C.fe_pretrained = True  # Whether to use pretrained weights (for supported extractors)
+C.fe_freeze_backbone = False  # Whether to freeze backbone weights
+
 # Demo image path (for visualization purposes)
 C.demo_image_path = "segmentation.jpg"  # Default fallback image
 C.demo_thermal_path = None  # If None, a synthetic thermal image will be created from the RGB image
@@ -67,8 +93,8 @@ C.lr = 6e-5
 C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 0.01
-C.batch_size = 8
-C.nepochs = 5
+C.batch_size = 2
+C.nepochs = 2
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -120,3 +146,10 @@ if __name__ == '__main__':
 
     if args.tensorboard:
         open_tensorboard()
+
+    if engine.distributed:
+        logger.info('.............distributed training.............')
+        if torch.cuda.is_available():
+            model.cuda()
+            model = DistributedDataParallel(model, device_ids=[engine.local_rank], 
+                                           output_device=engine.local_rank, find_unused_parameters=False)

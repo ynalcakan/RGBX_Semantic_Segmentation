@@ -132,7 +132,8 @@ def get_train_loader(engine, dataset):
 
     if engine.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-        batch_size = config.batch_size // engine.world_size
+        # Ensure at least 1 sample per GPU
+        batch_size = max(1, config.batch_size // engine.world_size)
         is_shuffle = False
 
     train_loader = data.DataLoader(train_dataset,
