@@ -42,32 +42,13 @@ C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Gu
 
 # Graph creation parameters
 C.create_graph = True  # Enable graph creation
-C.feature_dim = 512  # Node feature dimension
-C.gat_hidden_dim = 512  # GAT hidden dimension
-C.gat_num_layers = 2  # Number of GAT layers
-C.gat_heads = 4  # Number of attention heads per layer
-C.gat_dropout = 0.1  # Dropout rate for GAT
+C.feature_dim = 768  # Node feature dimension
+C.gat_hidden_dim = 768  # GAT hidden dimension
+C.gat_num_layers = 3  # Number of GAT layers
+C.gat_heads = 8  # Number of attention heads per layer
+C.gat_dropout = 0.15  # Dropout rate for GAT
 C.use_gatv2 = True  # Use GATv2 instead of GAT
 C.graph_fusion_mode = 'weighted'  # Options: 'add', 'weighted', 'concat'
-
-# Hierarchical graph parameters
-C.use_hierarchical_graph = True  # Whether to use hierarchical graph structure based on patch pyramid
-C.inter_level_edges = True       # Whether to add edges between different levels of the hierarchy
-
-# Cross-attention fusion parameters
-C.cross_attn_dim = 64  # Hidden dimension in cross-attention
-C.cross_attn_heads = 4  # Number of attention heads in cross-attention
-C.cross_attn_window_size = 8  # Window size for efficient attention
-
-# Feature extractor configuration
-C.feature_extractor = 'SimpleCNN'  # Options: 'SimpleCNN', 'ResNet', 'MobileNet', 'ViT'
-C.fe_pretrained = True  # Whether to use pretrained weights (for supported extractors)
-C.fe_freeze_backbone = False  # Whether to freeze backbone weights
-
-# Demo image path (for visualization purposes)
-C.demo_image_path = "segmentation.jpg"  # Default fallback image
-C.demo_thermal_path = None  # If None, a synthetic thermal image will be created from the RGB image
-
 
 """Image Config"""
 C.background = 255
@@ -92,9 +73,9 @@ C.FL_alpha = 0.25
 C.lr = 6e-5
 C.lr_power = 0.9
 C.momentum = 0.9
-C.weight_decay = 0.01
+C.weight_decay = 0.01   
 C.batch_size = 2
-C.nepochs = 2
+C.nepochs = 300
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
