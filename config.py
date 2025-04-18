@@ -73,9 +73,9 @@ C.FL_alpha = 0.25
 C.lr = 6e-5
 C.lr_power = 0.9
 C.momentum = 0.9
-C.weight_decay = 0.01   
-C.batch_size = 2
-C.nepochs = 300
+C.weight_decay = 0.01          # Base weight decay
+C.batch_size = 8
+C.nepochs = 2
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -84,6 +84,9 @@ C.warm_up_epoch = 10
 C.fix_bias = True
 C.bn_eps = 1e-3
 C.bn_momentum = 0.1
+
+# GAT training config
+C.gat_weight_decay = 0.015     # Weight decay specifically for GAT layers
 
 """Eval Config"""
 C.eval_iter = 25
@@ -117,6 +120,28 @@ C.log_file = C.log_dir + '/log_' + exp_time + '.log'
 C.link_log_file = C.log_file + '/log_last.log'
 C.val_log_file = C.log_dir + '/val_' + exp_time + '.log'
 C.link_val_log_file = C.log_dir + '/val_last.log'
+
+def configure_optimizer(model, lr=6e-5, weight_decay=0.01, gat_weight_decay=0.015):
+    # Separate GAT parameters from other parameters
+    gat_params = []
+    other_params = []
+    
+    for name, param in model.named_parameters():
+        if 'gat' in name.lower() or 'graph_processor' in name.lower():
+            gat_params.append(param)
+        else:
+            other_params.append(param)
+    
+    # Set up parameter groups with different weight decay values
+    param_groups = [
+        {'params': other_params, 'weight_decay': weight_decay},
+        {'params': gat_params, 'weight_decay': gat_weight_decay}  # Higher weight decay for GAT
+    ]
+    
+    # Create optimizer with parameter groups
+    optimizer = torch.optim.AdamW(param_groups, lr=lr)
+    
+    return optimizer
 
 if __name__ == '__main__':
     print(config.nepochs)

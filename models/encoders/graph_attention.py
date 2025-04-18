@@ -238,25 +238,25 @@ class SegformerGAT(nn.Module):
         
         # Modality fusion layer for combining RGB and X features
         self.modality_fusion = nn.Sequential(
-            nn.Linear(in_channels * 2, in_channels),  # Concat RGB and X features
-            nn.LayerNorm(in_channels),
+            nn.Linear(in_channels * 2, hidden_channels),  # Concat RGB and X features
+            nn.LayerNorm(hidden_channels),
             nn.ReLU(),
             nn.Dropout(dropout)
         )
         
         # GAT for processing the graph
         self.gat = GATSegmentation(
-            in_channels=in_channels,  # After modality fusion
+            in_channels=hidden_channels,  # After modality fusion
             hidden_channels=hidden_channels,
-            out_channels=out_channels,  # Match the backbone feature dimensions
+            out_channels=hidden_channels,  # Match hidden dimensions
             num_layers=num_layers,
             heads=heads,
             dropout=dropout,
             use_gatv2=use_gatv2
         )
         
-        # Final projection to match original feature dimensions if needed
-        self.final_proj = nn.Conv2d(out_channels, in_channels, kernel_size=1)
+        # Final projection to match original feature dimensions
+        self.final_proj = nn.Conv2d(hidden_channels, out_channels, kernel_size=1)
     
     def forward(self, imgs, modal_xs):
         """
@@ -281,7 +281,7 @@ class SegformerGAT(nn.Module):
         combined_features = torch.cat([rgb_features, x_features], dim=2)
         
         # Fuse the modality features
-        # [B, N, 2*C] -> [B, N, C]
+        # [B, N, 2*C] -> [B, N, hidden_C]
         fused_features = self.modality_fusion(combined_features)
         
         # Process with GAT

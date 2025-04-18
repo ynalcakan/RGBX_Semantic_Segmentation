@@ -100,19 +100,22 @@ class EncoderDecoder(nn.Module):
 
         self.aux_head = None
 
+        # Get decoder embed dim from config, defaulting to feature_dim if available
+        decoder_embed_dim = getattr(cfg, 'feature_dim', getattr(cfg, 'decoder_embed_dim', 512))
+        
         if cfg.decoder == 'MLPDecoder':
             logger.info('Using MLP Decoder')
             from .decoders.MLPDecoder import DecoderHead
-            self.decode_head = DecoderHead(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=cfg.decoder_embed_dim)
+            self.decode_head = DecoderHead(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=decoder_embed_dim)
         elif cfg.decoder == 'MLPDecoderpp':
             logger.info('Using MLP Decoderpp')
             from .decoders.MLPDecoderpp import DecoderHead
-            self.decode_head = DecoderHead(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=cfg.decoder_embed_dim)
+            self.decode_head = DecoderHead(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=decoder_embed_dim)
         
         elif cfg.decoder == 'UPernet':
             logger.info('Using Upernet Decoder')
             from .decoders.UPernet import UPerHead
-            self.decode_head = UPerHead(in_channels=self.channels ,num_classes=cfg.num_classes, norm_layer=norm_layer, channels=512)
+            self.decode_head = UPerHead(in_channels=self.channels ,num_classes=cfg.num_classes, norm_layer=norm_layer, channels=decoder_embed_dim)
             from .decoders.fcnhead import FCNHead
             self.aux_index = 2
             self.aux_rate = 0.4
@@ -143,8 +146,8 @@ class EncoderDecoder(nn.Module):
             
             # Graph processing features
             in_channels = self.channels[-1]  # Use the last level channel dimension from backbone
-            hidden_channels = getattr(cfg, 'gat_hidden_dim', 512)  # Match backbone's dimension
-            out_channels = cfg.num_classes  # Output channels match number of classes
+            hidden_channels = getattr(cfg, 'gat_hidden_dim', decoder_embed_dim)  # Match feature dimension
+            out_channels = in_channels  # Output channels match input channels for fusion
             num_layers = getattr(cfg, 'gat_num_layers', 2)
             heads = getattr(cfg, 'gat_heads', 4)
             dropout = getattr(cfg, 'gat_dropout', 0.1)

@@ -4,6 +4,9 @@ datasets/
 #Logfiles
 log*/
 
+# test image files
+/test
+
 # Weights
 /pretrained
 /weights
