@@ -4,6 +4,9 @@ datasets/
 #Logfiles
 log*/
 
+# flags
+*.flag
+
 # test image files
 /test
 

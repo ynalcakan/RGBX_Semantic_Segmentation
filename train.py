@@ -4,6 +4,7 @@ import sys
 import time
 import argparse
 from tqdm import tqdm
+import pathlib
 
 import torch
 import torch.nn as nn
@@ -26,6 +27,23 @@ from tensorboardX import SummaryWriter
 
 parser = argparse.ArgumentParser()
 logger = get_logger()
+
+# Helper function to synchronize flag detection across processes
+def check_stop_flag(engine):
+    """Check for stop flag and broadcast result to all processes"""
+    flag_exists = torch.tensor([0], device='cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Only rank 0 checks for the flag file
+    if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
+        stop_flag = pathlib.Path("stop_training.flag")
+        if stop_flag.exists():
+            flag_exists[0] = 1
+    
+    # Broadcast result to all processes
+    if engine.distributed:
+        torch.distributed.broadcast(flag_exists, 0)
+        
+    return flag_exists[0] == 1
 
 with Engine(custom_parser=parser) as engine:
     args = parser.parse_args()
@@ -127,6 +145,11 @@ with Engine(custom_parser=parser) as engine:
         model.train()
         logger.info('begin trainning:')
     
+    # Initialize early stopping variables
+    best_loss = float('inf')
+    patience_counter = 0
+    tolerance = config.early_stop_tolerance if hasattr(config, 'early_stop_tolerance') else 0.0
+
     for epoch in range(engine.state.epoch, config.nepochs+1):
         logger.info(f"--> [Epoch {epoch}] Starting...")
         if engine.distributed:
@@ -186,7 +209,67 @@ with Engine(custom_parser=parser) as engine:
         
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
+            
+        # Early stopping check with tolerance
+        current_loss = sum_loss / len(pbar)
+        
+        # In distributed training, only rank 0 makes early stopping decisions
+        # and broadcasts to other ranks
+        early_stop = torch.tensor([0], device='cuda' if torch.cuda.is_available() else 'cpu')
+        
+        if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
+            # Consider the model improved if loss decreased or within tolerance
+            if current_loss < best_loss * (1 + tolerance):
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                patience_counter = 0
+                logger.info(f"Loss improved or within tolerance: {current_loss:.6f} (best: {best_loss:.6f})")
+            else:
+                patience_counter += 1
+                logger.info(f"Loss did not improve: {current_loss:.6f} (best: {best_loss:.6f}, patience: {patience_counter}/{config.patience})")
+            
+            # Set early stopping flag if patience exceeded
+            if patience_counter >= config.patience:
+                early_stop[0] = 1
+        
+        # Broadcast early stopping decision to all processes
+        if engine.distributed:
+            torch.distributed.broadcast(early_stop, 0)
+            
+        # Check if we should stop training
+        if early_stop[0] == 1:
+            logger.info(f"Early stopping triggered after {epoch} epochs")
+            
+            # Save final checkpoint - only master process saves
+            if engine.distributed and (engine.local_rank == 0):
+                engine.save_and_link_checkpoint(config.checkpoint_dir,
+                                              config.log_dir,
+                                              config.log_dir_link)
+            elif not engine.distributed:
+                engine.save_and_link_checkpoint(config.checkpoint_dir,
+                                              config.log_dir,
+                                              config.log_dir_link)
+            
+            # Delete stop flag file if it exists - only master process
+            if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
+                stop_flag = pathlib.Path("stop_training.flag")
+                if stop_flag.exists():
+                    try:
+                        stop_flag.unlink()
+                        logger.info("Deleted stop flag file.")
+                    except Exception as e:
+                        logger.warning(f"Could not delete stop flag file: {e}")
+            
+            # Sync all processes before exit in distributed mode
+            if engine.distributed:
+                logger.info("Synchronizing all processes before exit...")
+                torch.distributed.barrier()
+            
+            logger.info("Early stopping triggered - exiting training.")
+            # Use os._exit for a more forceful exit
+            os._exit(0)
 
+        # Save checkpoint at regular intervals or at the end
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if engine.distributed and (engine.local_rank == 0):
                 engine.save_and_link_checkpoint(config.checkpoint_dir,
@@ -196,3 +279,36 @@ with Engine(custom_parser=parser) as engine:
                 engine.save_and_link_checkpoint(config.checkpoint_dir,
                                                 config.log_dir,
                                                 config.log_dir_link)
+        
+        # Check for early stopping flag file
+        if check_stop_flag(engine):
+            logger.info("Stop flag detected! Saving checkpoint and stopping training...")
+            
+            # Save checkpoint
+            if engine.distributed and (engine.local_rank == 0):
+                engine.save_and_link_checkpoint(config.checkpoint_dir,
+                                              config.log_dir,
+                                              config.log_dir_link)
+            elif not engine.distributed:
+                engine.save_and_link_checkpoint(config.checkpoint_dir,
+                                              config.log_dir,
+                                              config.log_dir_link)
+            
+            # Delete flag file after processing it - only master process
+            if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
+                stop_flag = pathlib.Path("stop_training.flag")
+                if stop_flag.exists():
+                    try:
+                        stop_flag.unlink()
+                        logger.info("Deleted stop flag file.")
+                    except Exception as e:
+                        logger.warning(f"Could not delete stop flag file: {e}")
+            
+            # Sync all processes before exit in distributed mode
+            if engine.distributed:
+                logger.info("Synchronizing all processes before exit...")
+                torch.distributed.barrier()
+                
+            logger.info("Manual stop flag detected - exiting training.")
+            # Use os._exit for a more forceful exit
+            os._exit(0)
