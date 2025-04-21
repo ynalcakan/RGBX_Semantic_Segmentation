@@ -112,6 +112,8 @@ with Engine(custom_parser=parser) as engine:
             model.cuda()
             model = DistributedDataParallel(model, device_ids=[engine.local_rank], 
                                            output_device=engine.local_rank, find_unused_parameters=False)
+            # Set static graph to fix gradient checkpointing issues
+            model._set_static_graph()
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)

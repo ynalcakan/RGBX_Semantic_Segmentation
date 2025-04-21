@@ -162,7 +162,8 @@ class EncoderDecoder(nn.Module):
                 num_layers=num_layers,
                 heads=heads,
                 dropout=dropout,
-                use_gatv2=use_gatv2
+                use_gatv2=use_gatv2,
+                cfg=cfg
             )
             
             # Fusion mode

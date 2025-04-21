@@ -1,15 +1,24 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as checkpoint
 from torch_geometric.nn import GATConv, GATv2Conv
 from torch_geometric.data import Data, Batch
+
+# Import the ContiguousConv2d class
+from ..decoders.MLPDecoder import ContiguousConv2d
 
 
 class SegformerFeatureExtractor(nn.Module):
     """Extract features from segformer and create a graph."""
-    def __init__(self, segformer_model):
+    def __init__(self, segformer_model, cfg=None):
         super().__init__()
         self.segformer = segformer_model
+        self.cfg = cfg
+        # Get the feature level to use for graph creation
+        self.feature_level = 3
+        if cfg is not None:
+            self.feature_level = getattr(cfg, 'graph_feature_level', 3)
         
     def forward(self, rgb, modal_x):
         """
@@ -28,44 +37,26 @@ class SegformerFeatureExtractor(nn.Module):
         # Get multi-scale features from segformer
         features = self.segformer(rgb, modal_x)
         
-        # Get pre-fusion features for both modalities
-        # For this implementation, we'll use the segformer's internal structure
-        # to extract pre-fusion features from the last level
+        # Use the configured feature level (limit to available levels)
+        level = min(self.feature_level, len(features) - 1)
         
-        # Access the last transformer block output before fusion for RGB and modal_x
-        # This depends on the specific segformer implementation
+        # Get the selected level features
+        selected_features = features[level]
+        B, C, H, W = selected_features.shape
         
-        # In our case, instead of recomputing the entire feature extraction,
-        # we can access the internal representations from FRMs (Feature Rectify Modules)
-        # in the last level (level 4) of the segformer
-        
-        # The implementation assumes that rgb_features and x_features are available
-        # in the FRM (Feature Rectify Module) of the segformer backbone
-        
-        # For simplicity, we'll use a workaround to get individual modality features:
-        # 1. Get the last fused features (already computed)
-        fused_features = features[-1]  # [B, C, H, W]
-        B, C, H, W = fused_features.shape
-        
-        # 2. Create an edge index tensor for the grid graph
+        # Create an edge index tensor for the grid graph at this resolution
         edge_index = self._create_grid_graph_connectivity(H, W)
-        edge_index = edge_index.to(fused_features.device)
+        edge_index = edge_index.to(selected_features.device)
         
-        # 3. Access individual modality features directly from the backbone's FRM
-        # Get the pre-fusion features from the last Feature Rectify Module (FRM)
-        # Note: This assumes that the segformer model has a specific structure
-        # where RGB and X features are available before fusion
+        # Try to access individual modality features for the selected level
         try:
-            # Try to access the internal features (implementation specific)
             # These represent the pre-fusion features for RGB and X modality
-            rgb_features = self.segformer.FRMs[3].rgb_features
-            x_features = self.segformer.FRMs[3].x_features
+            rgb_features = self.segformer.FRMs[level].rgb_features
+            x_features = self.segformer.FRMs[level].x_features
         except (AttributeError, IndexError):
-            # Fallback: If direct access isn't possible, 
-            # use the fused features as a placeholder for both
-            # This is a workaround if the model doesn't expose internal features
-            rgb_features = fused_features
-            x_features = fused_features
+            # Fallback: If direct access isn't possible, use the selected features
+            rgb_features = selected_features
+            x_features = selected_features
         
         # Reshape to format needed for graph processing
         # [B, C, H, W] -> [B, H*W, C]
@@ -130,6 +121,9 @@ class GATSegmentation(nn.Module):
         self.dropout = dropout
         self.use_gatv2 = use_gatv2
         
+        # Use gradient checkpointing to save memory
+        self.use_checkpoint = False  # Disabled by default to avoid DDP issues
+        
         # Initial projection
         self.in_proj = nn.Linear(in_channels, hidden_channels)
         
@@ -182,6 +176,11 @@ class GATSegmentation(nn.Module):
         self.norm = nn.LayerNorm(hidden_channels)
         self.dropout = nn.Dropout(dropout)
     
+    def _layer_forward(self, x, edge_index, layer_idx):
+        """Helper function for gradient checkpointing"""
+        x = self.gat_layers[layer_idx](x, edge_index)
+        return F.relu(x)
+    
     def forward(self, x, edge_index):
         """
         Forward pass through the GAT
@@ -208,10 +207,13 @@ class GATSegmentation(nn.Module):
             x_b = F.relu(x_b)
             x_b = self.dropout(x_b)
             
-            # Apply GAT layers
-            for layer in self.gat_layers:
-                x_b = layer(x_b, edge_index)
-                x_b = F.relu(x_b)
+            # Apply GAT layers with gradient checkpointing if enabled
+            for i, layer in enumerate(self.gat_layers):
+                if self.use_checkpoint and self.training:
+                    x_b = checkpoint.checkpoint(self._layer_forward, x_b, edge_index, i)
+                else:
+                    x_b = layer(x_b, edge_index)
+                    x_b = F.relu(x_b)
                 
             # Add to output list
             output_list.append(x_b)
@@ -230,11 +232,28 @@ class SegformerGAT(nn.Module):
     to be used by a decoder for final segmentation.
     """
     def __init__(self, segformer_model, in_channels, hidden_channels, out_channels, 
-                 num_layers=2, heads=4, dropout=0.1, use_gatv2=True):
+                 num_layers=2, heads=4, dropout=0.1, use_gatv2=True, cfg=None):
         super().__init__()
         
         # Feature extractor from the segformer
-        self.feature_extractor = SegformerFeatureExtractor(segformer_model)
+        self.feature_extractor = SegformerFeatureExtractor(segformer_model, cfg)
+        
+        # Get the feature level from config
+        self.feature_level = 3
+        if cfg is not None:
+            self.feature_level = getattr(cfg, 'graph_feature_level', 3)
+        
+        # Get input channels based on feature level if different from provided
+        if self.feature_level != 3:
+            # Adjust in_channels based on the selected feature level
+            level_channels = [64, 128, 320, 512]  # Default for MiT-B2
+            if hasattr(segformer_model, 'channels'):
+                level_channels = segformer_model.channels
+            level = min(self.feature_level, len(level_channels) - 1)
+            in_channels = level_channels[level]
+        
+        # Store the output channels for upsampling if needed
+        self.out_channels = out_channels
         
         # Modality fusion layer for combining RGB and X features
         self.modality_fusion = nn.Sequential(
@@ -255,8 +274,8 @@ class SegformerGAT(nn.Module):
             use_gatv2=use_gatv2
         )
         
-        # Final projection to match original feature dimensions
-        self.final_proj = nn.Conv2d(hidden_channels, out_channels, kernel_size=1)
+        # Final projection to match output channels
+        self.final_proj = ContiguousConv2d(hidden_channels, out_channels, kernel_size=1)
     
     def forward(self, imgs, modal_xs):
         """
@@ -273,7 +292,7 @@ class SegformerGAT(nn.Module):
         # Get Segformer features and create graph
         features, rgb_features, x_features, edge_index = self.feature_extractor(imgs, modal_xs)
         
-        # Get original backbone features for later use
+        # Get original backbone features for later use (always use the last level for fusion)
         backbone_features = features[-1]  # Last level features
         
         # Combine RGB and X modality features
@@ -288,11 +307,25 @@ class SegformerGAT(nn.Module):
         gat_output = self.gat(fused_features, edge_index)
         
         # Reshape GAT output back to spatial dimensions - ensure tensor is contiguous
-        B, _, H, W = features[-1].shape
+        B = features[self.feature_level].shape[0]
+        H, W = features[self.feature_level].shape[2], features[self.feature_level].shape[3]
         gat_output = gat_output.contiguous().view(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         
-        # Apply final projection to match feature dimensions if needed
+        # Apply final projection
         enhanced_features = self.final_proj(gat_output).contiguous()
+        
+        # If feature level isn't the last one, we need to upsample or downsample to match the last level size
+        if self.feature_level != 3:
+            target_h, target_w = features[-1].shape[2], features[-1].shape[3]
+            current_h, current_w = enhanced_features.shape[2], enhanced_features.shape[3]
+            
+            if current_h != target_h or current_w != target_w:
+                enhanced_features = F.interpolate(
+                    enhanced_features, 
+                    size=(target_h, target_w), 
+                    mode='bilinear', 
+                    align_corners=False
+                ).contiguous()
         
         # Return the enhanced features to be used by the decoder
         return enhanced_features 
