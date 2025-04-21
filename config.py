@@ -8,8 +8,6 @@ import argparse
 from torch.nn.parallel import DistributedDataParallel
 import torch
 import torch.nn as nn
-from torchvision import transforms
-from torchvision.transforms import functional as F
 
 C = edict()
 config = C
@@ -43,18 +41,16 @@ C.num_eval_imgs = 393
 C.num_classes = 9
 C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Guardrail", "Color Cone", "Bump"]
 
-# Graph model configurations
-C.use_graph = True # Enable graph creation
-C.use_gatv2 = True  # Use GATv2 instead of GAT
+# Graph creation parameters
+C.create_graph = True  # Enable graph creation
 C.feature_dim = 320       # Match level 2 native dimension
-C.gat_hidden_dim = 384    # Hidden dimension used in GAT layers
-C.graph_num_layers = 2  # Number of graph attention layers
-C.graph_heads = 4  # Number of attention heads
-C.graph_dropout = 0.15  # Dropout rate for graph networks
-C.graph_fusion_mode = 'concat'  # Options: 'weighted', 'add', 'concat'
-C.fusion_weight = 0.7  # Weight for backbone features in weighted fusion (0-1)
-C.graph_feature_level = 2  # Level of features to extract from backbone (0-3)
-
+C.gat_hidden_dim = 320    # Match feature_dim for simplicity
+C.gat_num_layers = 2      # Reduce from 3 to 2
+C.gat_heads = 4  # Reduced from 8 to 4 for memory efficiency with level 2 features
+C.gat_dropout = 0.15  # Dropout rate for GAT
+C.use_gatv2 = True  # Use GATv2 instead of GAT
+C.graph_fusion_mode = 'weighted'  # Options: 'add', 'weighted', 'concat'
+C.graph_feature_level = 2  # Feature level to use for graph: 0 (finest) to 3 (coarsest)
 
 """Image Config"""
 C.background = 255
@@ -80,8 +76,8 @@ C.lr = 1e-4
 C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 0.005       # Reduced from 0.01
-C.batch_size = 8 
-C.nepochs = 25            # Enough epochs for convergence
+C.batch_size = 8               # Reduced from 8 to 4 due to larger graph size from level 2 features
+C.nepochs = 60            # Enough epochs for convergence
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -94,39 +90,18 @@ C.bn_momentum = 0.1
 # GAT training config
 C.gat_weight_decay = 0.015   # Keep as is
 
-""""Augmentation"""
-# Class weighting for better small object detection
-C.use_class_weights = True
-# Approximate class frequency based on typical segmentation datasets
-# You can adjust these based on your specific dataset statistics
-C.class_weights = [0.8, 0.9, 1.2, 1.5, 1.2, 1.5, 1.0, 1.8, 1.5]  # Higher weight for smaller/rare classes
-
-# Add to config.py
-C.use_onecycle = True
-C.max_lr = 3e-4
-
-# Add data augmentation settings
-C.color_jitter = 0.4
-C.random_scale_range = (0.5, 2.0)
-C.random_crop_size = [384, 512]  # Smaller than full resolution
-C.mixup_alpha = 0.2  # Optional - mix multiple images
-
-# Add layer freezing option
-C.freeze_backbone_layers = 1  # Freeze first layer of backbone
-
 """Eval Config"""
-C.eval_iter = 20
+C.eval_iter = 25
 C.eval_stride_rate = 2 / 3
 C.eval_scale_array = [1] # [0.75, 1, 1.25] # 
 C.eval_flip = False # True # 
 C.eval_crop_size = [480, 640] # [height weight]
 C.patience = 10           # Stop if no improvement for 10 epochs
-C.early_stop_tolerance = 0.005  # Allow 0.5% fluctuation in validation metric without resetting patience
 C.eval_interval = 1       # Validate every epoch
 
 """Store Config"""
-C.checkpoint_start_epoch = 15
-C.checkpoint_step = 1
+C.checkpoint_start_epoch = 350
+C.checkpoint_step = 50
 
 """Path Config"""
 def add_path(path):
@@ -172,8 +147,6 @@ def configure_optimizer(model, lr=6e-5, weight_decay=0.01, gat_weight_decay=0.01
     
     return optimizer
 
-
-
 if __name__ == '__main__':
     print(config.nepochs)
     parser = argparse.ArgumentParser()
@@ -181,5 +154,58 @@ if __name__ == '__main__':
         '-tb', '--tensorboard', default=False, action='store_true')
     args = parser.parse_args()
 
-    # if args.tensorboard:
-    #     open_tensorboard()
+    if args.tensorboard:
+        open_tensorboard()
+
+    if engine.distributed:
+        logger.info('.............distributed training.............')
+        if torch.cuda.is_available():
+            model.cuda()
+            model = DistributedDataParallel(model, device_ids=[engine.local_rank], 
+                                           output_device=engine.local_rank, find_unused_parameters=False)
+
+def __init__(self, segformer_model, in_channels, hidden_channels, out_channels, 
+             num_layers=2, heads=4, dropout=0.1, use_gatv2=True):
+    super().__init__()
+    
+    # Feature extractor from the segformer
+    self.feature_extractor = SegformerFeatureExtractor(segformer_model)
+    
+    # Get the graph feature level
+    self.feature_level = getattr(segformer_model.cfg, 'graph_feature_level', 3)
+    
+    # Get input channels based on feature level if different from provided
+    if self.feature_level != 3:
+        # Segformer MiT-B2 has these channel counts at different levels
+        level_channels = [64, 128, 320, 512]  # Default for MiT-B2
+        if hasattr(segformer_model, 'channels'):
+            level_channels = segformer_model.channels
+        in_channels = level_channels[self.feature_level]
+    
+    # Modality fusion layer for combining RGB and X features
+    self.modality_fusion = nn.Sequential(
+        nn.Linear(in_channels * 2, hidden_channels),
+        nn.LayerNorm(hidden_channels),
+        nn.ReLU(),
+        nn.Dropout(dropout)
+    )
+    
+    # Rest of the initialization remains the same
+    ...
+
+# Add to config.py
+C.use_onecycle = True
+C.max_lr = 3e-4
+
+# Add these to config.py
+C.color_jitter = 0.4
+C.random_scale_range = (0.5, 2.0)
+C.random_crop_size = [384, 512]  # Smaller than full resolution
+C.mixup_alpha = 0.2  # Optional - mix multiple images
+
+# Add to config.py
+C.freeze_backbone_layers = 1  # Freeze first layer of backbone
+
+# First 10 epochs: freeze more layers
+# Next 10 epochs: freeze fewer layers
+# Remaining epochs: train all layers
