@@ -8,7 +8,6 @@ import argparse
 from torch.nn.parallel import DistributedDataParallel
 import torch
 import torch.nn as nn
-
 C = edict()
 config = C
 cfg = C
@@ -49,7 +48,7 @@ C.gat_num_layers = 2      # Reduce from 3 to 2
 C.gat_heads = 4  # Reduced from 8 to 4 for memory efficiency with level 2 features
 C.gat_dropout = 0.15  # Dropout rate for GAT
 C.use_gatv2 = True  # Use GATv2 instead of GAT
-C.graph_fusion_mode = 'weighted'  # Options: 'add', 'weighted', 'concat'
+C.graph_fusion_mode = 'concat'  # Options: 'add', 'weighted', 'concat'
 C.graph_feature_level = 2  # Feature level to use for graph: 0 (finest) to 3 (coarsest)
 
 """Image Config"""
@@ -65,18 +64,30 @@ C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
 C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.optimizer = 'AdamW'
-C.criterion = 'CrossEntropyLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss
+# e.g. inverse‑frequency or median‑frequency weights
+C.criterion = 'WeightedCrossEntropy2d'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d
+
+# # inverse‑frequency
+# counts = np.array()
+# inv_freq = 1.0 / counts
+# class_weights = inv_freq / inv_freq.sum() * len(inv_freq)
+
+"""Loss function Config"""
+# WeightedCrossEntropy2d parameters
+C.class_weights = [0.6, 0.9, 1.0, 1.4, 1.2, 1.5, 1.7, 1.4, 1.2] 
 
 # SigmoidFocalLoss parameters
 C.FL_gamma = 4.0     
 C.FL_alpha = 0.25
 
 """Train Config"""
+C.use_onecycle = True
+C.max_lr = 3e-4
 C.lr = 1e-4
 C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 0.005       # Reduced from 0.01
-C.batch_size = 8               # Reduced from 8 to 4 due to larger graph size from level 2 features
+C.batch_size = 4               # Reduced from 8 to 4 due to larger graph size from level 2 features
 C.nepochs = 60            # Enough epochs for convergence
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
@@ -90,6 +101,18 @@ C.bn_momentum = 0.1
 # GAT training config
 C.gat_weight_decay = 0.015   # Keep as is
 
+# First 10 epochs: freeze more layers
+# Next 10 epochs: freeze fewer layers
+# Remaining epochs: train all layers
+# Freeze backbone layers
+C.freeze_backbone_layers = 1  # Freeze first layer of backbone
+
+# Add these to config.py
+C.color_jitter = 0.4
+C.random_scale_range = (0.5, 2.0)
+C.random_crop_size = [384, 512]  # Smaller than full resolution
+C.mixup_alpha = 0.2  # Optional - mix multiple images
+
 """Eval Config"""
 C.eval_iter = 25
 C.eval_stride_rate = 2 / 3
@@ -100,8 +123,8 @@ C.patience = 10           # Stop if no improvement for 10 epochs
 C.eval_interval = 1       # Validate every epoch
 
 """Store Config"""
-C.checkpoint_start_epoch = 350
-C.checkpoint_step = 50
+C.checkpoint_start_epoch = 20
+C.checkpoint_step = 5
 
 """Path Config"""
 def add_path(path):
@@ -189,23 +212,3 @@ def __init__(self, segformer_model, in_channels, hidden_channels, out_channels,
         nn.ReLU(),
         nn.Dropout(dropout)
     )
-    
-    # Rest of the initialization remains the same
-    ...
-
-# Add to config.py
-C.use_onecycle = True
-C.max_lr = 3e-4
-
-# Add these to config.py
-C.color_jitter = 0.4
-C.random_scale_range = (0.5, 2.0)
-C.random_crop_size = [384, 512]  # Smaller than full resolution
-C.mixup_alpha = 0.2  # Optional - mix multiple images
-
-# Add to config.py
-C.freeze_backbone_layers = 1  # Freeze first layer of backbone
-
-# First 10 epochs: freeze more layers
-# Next 10 epochs: freeze fewer layers
-# Remaining epochs: train all layers

@@ -10,6 +10,7 @@ from collections import OrderedDict, defaultdict
 import torch
 import torch.utils.model_zoo as model_zoo
 import torch.distributed as dist
+import numpy as np
 
 class LogFormatter(logging.Formatter):
     log_fout = None
@@ -142,7 +143,7 @@ def load_restore_model(model, model_file):
         state_dict = model_file
     t_ioend = time.time()
 
-    model.load_state_dict(state_dict, strict=True)
+    model.load_state_dict(state_dict, strict=False)
     
     del state_dict
     t_end = time.time()
@@ -177,7 +178,7 @@ def load_model(model, model_file, is_restore=False):
             new_state_dict[name] = v
         state_dict = new_state_dict
 
-    model.load_state_dict(state_dict, strict=True)
+    model.load_state_dict(state_dict, strict=False)
     ckpt_keys = set(state_dict.keys())
     own_keys = set(model.state_dict().keys())
     missing_keys = own_keys - ckpt_keys
@@ -248,3 +249,10 @@ def ensure_dir(path):
 def _dbg_interactive(var, value):
     from IPython import embed
     embed()
+
+# Add to config.py
+counts = np.array([93.249, 7.345, 26.786, 0.015, 0.001, 0.001, 0.001, 0.004, 0.001])
+inv_freq = 1.0 / (counts + 0.001)  # Add small constant to avoid division by zero
+# Apply power scaling to boost rare classes even more
+inv_freq_powered = inv_freq ** 1.5
+C.class_weights = inv_freq_powered / inv_freq_powered.mean() * len(inv_freq_powered)

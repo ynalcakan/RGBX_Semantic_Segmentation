@@ -420,4 +420,48 @@ class TopologyAwareLoss(nn.Module):
         mask_np = mask.detach().cpu().numpy()
         _, num_components = nd.label(mask_np)
         return torch.tensor(num_components, device=mask.device).float()
+    
+class MedianFreqCELoss(nn.Module):
+    """
+    Median Frequency Balancing Cross Entropy Loss.
+    Weights each class by the ratio of median frequency to class frequency.
+    This is more robust to outliers than simple inverse frequency.
+    """
+    def _init_(self, num_classes=9, ignore_index=255):
+        super(MedianFreqCELoss, self)._init_()
+        self.num_classes = num_classes
+        self.ignore_index = ignore_index
+        
+    def forward(self, pred, target):
+        # Compute frequencies in batch
+        valid_mask = (target != self.ignore_index)
+        freqs = torch.zeros(self.num_classes, device=pred.device)
+        
+        total_valid = valid_mask.sum().float()
+        for c in range(self.num_classes):
+            class_count = torch.sum((target == c) & valid_mask).float()
+            freqs[c] = class_count / (total_valid + 1e-8)
+        
+        # Get median frequency
+        median_freq = torch.median(freqs[freqs > 0])
+        
+        # Compute weights as median / frequency 
+        weights = torch.zeros_like(freqs)
+        nonzero_mask = freqs > 0
+        weights[nonzero_mask] = median_freq / (freqs[nonzero_mask] + 1e-8)
+        
+        # Apply cross-entropy with weights
+        loss = F.cross_entropy(pred, target, weight=weights, ignore_index=self.ignore_index)
+        return loss
+    
+class WeightedCrossEntropy2d(nn.Module):
+    def __init__(self, weight=None, ignore_index=255, reduction='mean'):
+        super().__init__()
+        self.criterion = nn.CrossEntropyLoss(
+            weight=weight, 
+            ignore_index=ignore_index, 
+            reduction=reduction
+        )
 
+    def forward(self, logits, target):
+        return self.criterion(logits, target)

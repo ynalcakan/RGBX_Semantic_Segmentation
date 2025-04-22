@@ -20,7 +20,8 @@ from utils.lr_policy import WarmUpPolyLR, StepLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, WeightedCrossEntropy2d
+from utils.weighted_metric import compute_batch_weighted_iou
 
 from tensorboardX import SummaryWriter
 
@@ -77,6 +78,14 @@ with Engine(custom_parser=parser) as engine:
         criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
         criterion2 = TopologyAwareLoss(ignore_index=config.background, reduction='mean')
         criterion = (criterion1, criterion2)
+    elif criterion == 'WeightedCrossEntropy2d':
+        wt = torch.tensor(config.class_weights, dtype=torch.float)
+        if torch.cuda.is_available(): wt = wt.cuda()
+        criterion = WeightedCrossEntropy2d(
+        weight=wt,
+        ignore_index=config.background,
+        reduction='mean'
+    )
     else:
         raise NotImplementedError
 
@@ -137,6 +146,10 @@ with Engine(custom_parser=parser) as engine:
         dataloader = iter(train_loader)
 
         sum_loss = 0
+        # Track IoU metrics 
+        sum_iou = 0
+        sum_weighted_iou = 0
+        valid_batches = 0
 
         for idx in pbar:
             engine.update_iteration(epoch, idx)
@@ -153,7 +166,28 @@ with Engine(custom_parser=parser) as engine:
             modal_xs = modal_xs.cuda(non_blocking=True)
 
             # Pass inputs to model (graph processing is now integrated)
-            loss = model(imgs, modal_xs, gts)
+            # For non-tuple criterion, get both loss and logits
+            if not isinstance(criterion, tuple):
+                with torch.no_grad():
+                    # Get model outputs without loss calculation
+                    logits = model.encode_decode(imgs, modal_xs)
+                
+                # Now compute the loss separately
+                loss = model(imgs, modal_xs, gts)
+                
+                # Calculate IoU metrics if we have class weights
+                if hasattr(config, 'class_weights'):
+                    batch_iou, batch_weighted_iou = compute_batch_weighted_iou(
+                        logits, gts, config.num_classes, 
+                        config.class_weights, config.background
+                    )
+                    
+                    sum_iou += batch_iou
+                    sum_weighted_iou += batch_weighted_iou
+                    valid_batches += 1
+            else:
+                # For tuple criterion, just get the loss
+                loss = model(imgs, modal_xs, gts)
 
             # reduce the whole loss over multi-gpu
             if engine.distributed:
@@ -175,17 +209,31 @@ with Engine(custom_parser=parser) as engine:
                         + ' lr=%.4e' % lr \
                         + ' loss=%.4f total_loss=%.4f' % (reduce_loss.item(), (sum_loss / (idx + 1)))
             else:
-                sum_loss += loss
+                sum_loss += loss.item() if isinstance(loss, torch.Tensor) else loss
                 print_str = 'Epoch {}/{}'.format(epoch, config.nepochs) \
                         + ' Iter {}/{}:'.format(idx + 1, config.niters_per_epoch) \
                         + ' lr=%.4e' % lr \
-                        + ' loss=%.4f total_loss=%.4f' % (loss, (sum_loss / (idx + 1)))
+                        + ' loss=%.4f total_loss=%.4f' % (loss.item() if isinstance(loss, torch.Tensor) else loss, 
+                                                       (sum_loss / (idx + 1)))
 
             del loss
             pbar.set_description(print_str, refresh=False)
         
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
+            
+            # Log IoU metrics if they were calculated
+            if valid_batches > 0:
+                avg_iou = sum_iou / valid_batches
+                avg_weighted_iou = sum_weighted_iou / valid_batches
+                
+                tb.add_scalar('train_mIoU', avg_iou, epoch)
+                tb.add_scalar('train_weighted_mIoU', avg_weighted_iou, epoch)
+                
+                # Log the difference to see if weighting helps
+                tb.add_scalar('train_mIoU_improvement', avg_weighted_iou - avg_iou, epoch)
+                
+                logger.info(f"Epoch {epoch}: mIoU: {avg_iou:.4f}, weighted_mIoU: {avg_weighted_iou:.4f}")
 
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if engine.distributed and (engine.local_rank == 0):
