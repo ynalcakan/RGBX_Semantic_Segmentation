@@ -71,9 +71,25 @@ class SegEvaluator(Evaluator):
             labeled += d['labeled']
             count += 1
 
+        # Calculate metrics from histogram
         iou, mean_IoU, _, freq_IoU, mean_pixel_acc, pixel_acc = compute_score(hist, correct, labeled)
+        
+        # Print dataset information
+        logger.info('\n' + '=' * 80)
+        logger.info('{:^80}'.format('EVALUATION SUMMARY'))
+        logger.info('=' * 80)
+        logger.info('Dataset: {}'.format(config.dataset_name))
+        logger.info('Backbone: {}, Decoder: {}'.format(config.backbone, config.decoder))
+        logger.info('Rectify module: {}, Fusion module: {}'.format(config.rectify_module, config.fusion_module))
+        logger.info('Loss function: {}, Optimizer: {}, Epochs: {}'.format(config.criterion, config.optimizer, config.nepochs))
+        logger.info('Number of classes: {}'.format(config.num_classes))
+        logger.info('Number of eval images: {}'.format(self.ndata))
+        logger.info('-' * 80)
+        
+        # Get the formatted result string
         result_line = print_iou(iou, freq_IoU, mean_pixel_acc, pixel_acc,
-                                dataset.class_names, show_no_back=False)
+                              dataset.class_names, show_no_back=False)
+        
         return result_line
 
 if __name__ == "__main__":
@@ -100,7 +116,8 @@ if __name__ == "__main__":
                     'class_names': config.class_names,
                     'train_source': config.train_source,
                     'eval_source': config.eval_source,
-                    'class_names': config.class_names}
+                    'class_names': config.class_names,
+                    'class_counts': config.num_classes}
     val_pre = ValPre()
     dataset = RGBXDataset(data_setting, 'val', val_pre)
  
