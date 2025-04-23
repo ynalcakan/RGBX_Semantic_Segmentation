@@ -82,24 +82,43 @@ class TrainPre(object):
         self.norm_std = norm_std
 
     def __call__(self, rgb, gt, modal_x):
-        rgb, gt, modal_x = random_mirror(rgb, gt, modal_x)
+        # Apply horizontal flipping based on config
+        if config.enable_random_mirror:
+            rgb, gt, modal_x = random_mirror(rgb, gt, modal_x)
+            
+        # Apply random scaling
         if config.train_scale_array is not None:
             rgb, gt, modal_x, scale = random_scale(rgb, gt, modal_x, config.train_scale_array)
 
-        rgb = random_color_jitter(rgb)
-        rgb = random_gaussian_blur(rgb)
-        rgb, gt, modal_x = cutout(rgb, gt, modal_x)
+        # Apply color jittering based on config
+        if config.enable_color_jitter:
+            rgb = random_color_jitter(rgb)
+            
+        # Apply gaussian blur based on config
+        if config.enable_gaussian_blur:
+            rgb = random_gaussian_blur(rgb)
+            
+        # Apply cutout based on config
+        if config.enable_cutout:
+            rgb, gt, modal_x = cutout(rgb, gt, modal_x)
 
         rgb = normalize(rgb, self.norm_mean, self.norm_std)
         modal_x = normalize(modal_x, self.norm_mean, self.norm_std)
 
         crop_size = (config.image_height, config.image_width)
-        crop_pos = generate_random_crop_pos(rgb.shape[:2], crop_size)
-
-        p_rgb, _ = random_crop_pad_to_shape(rgb, crop_pos, crop_size, 0)
-        p_gt, _ = random_crop_pad_to_shape(gt, crop_pos, crop_size, 255)
-        p_modal_x, _ = random_crop_pad_to_shape(modal_x, crop_pos, crop_size, 0)
-
+        
+        # Apply random crop based on config
+        if hasattr(config, 'enable_random_crop') and config.enable_random_crop:
+            crop_pos = generate_random_crop_pos(rgb.shape[:2], crop_size)
+            p_rgb, _ = random_crop_pad_to_shape(rgb, crop_pos, crop_size, 0)
+            p_gt, _ = random_crop_pad_to_shape(gt, crop_pos, crop_size, 255)
+            p_modal_x, _ = random_crop_pad_to_shape(modal_x, crop_pos, crop_size, 0)
+        else:
+            # If no random crop, just resize to the target size
+            p_rgb = cv2.resize(rgb, (crop_size[1], crop_size[0]), interpolation=cv2.INTER_LINEAR)
+            p_gt = cv2.resize(gt, (crop_size[1], crop_size[0]), interpolation=cv2.INTER_NEAREST)
+            p_modal_x = cv2.resize(modal_x, (crop_size[1], crop_size[0]), interpolation=cv2.INTER_LINEAR)
+        
         p_rgb = p_rgb.transpose(2, 0, 1)
         p_modal_x = p_modal_x.transpose(2, 0, 1)
         
