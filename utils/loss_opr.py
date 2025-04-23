@@ -10,6 +10,9 @@ from engine.logger import get_logger
 logger = get_logger()
 
 class FocalLoss2d(nn.Module):
+    """
+    FocalLoss2d is a loss function that combines the cross-entropy loss and the focal loss.
+    """
     def __init__(self, gamma=0, weight=None, reduction='mean', ignore_index=255):
         super(FocalLoss2d, self).__init__()
         self.gamma = gamma
@@ -24,6 +27,9 @@ class FocalLoss2d(nn.Module):
 
 
 class RCELoss(nn.Module):
+    """
+    RCELoss is a loss function that combines the cross-entropy loss and the RCE loss.
+    """
     def __init__(self, ignore_index=255, reduction='mean', weight=None, class_num=37, beta=0.01):
         super(RCELoss, self).__init__()
         self.beta = beta
@@ -61,6 +67,9 @@ class RCELoss(nn.Module):
         return loss
 
 class BalanceLoss(nn.Module):
+    """
+    BalanceLoss is a loss function that combines the cross-entropy loss and the balance loss.
+    """
     def __init__(self, ignore_index=255, reduction='mean', weight=None):
         super(BalanceLoss, self).__init__()
         self.ignore_label = ignore_index
@@ -80,6 +89,9 @@ class BalanceLoss(nn.Module):
         return loss
 
 class berHuLoss(nn.Module):
+    """
+    berHuLoss is a loss function that combines the cross-entropy loss and the berHu loss.
+    """
     def __init__(self, delta=0.2, ignore_index=0, reduction='mean'):
         super(berHuLoss,self).__init__()
         self.delta = delta
@@ -102,6 +114,9 @@ class berHuLoss(nn.Module):
 
 
 class SigmoidFocalLoss(nn.Module):
+    """
+    SigmoidFocalLoss is a loss function that combines the cross-entropy loss and the sigmoid focal loss.
+    """
     def __init__(self, ignore_label, gamma=2.0, alpha=0.25, reduction='mean'):
         super(SigmoidFocalLoss, self).__init__()
         self.ignore_label = ignore_label
@@ -149,6 +164,9 @@ class SigmoidFocalLoss(nn.Module):
 
 
 class ProbOhemCrossEntropy2d(nn.Module):
+    """
+    ProbOhemCrossEntropy2d is a loss function that combines the cross-entropy loss and the probability-based OHEM loss.
+    """
     def __init__(self, ignore_label, reduction='mean', thresh=0.6, min_kept=256,
                  down_ratio=1, use_weight=False):
         super(ProbOhemCrossEntropy2d, self).__init__()
@@ -201,6 +219,9 @@ class ProbOhemCrossEntropy2d(nn.Module):
         return self.criterion(pred, target)
 
 class Mask2FormerLoss(nn.Module):
+    """
+    Mask2FormerLoss is a loss function that combines the cross-entropy loss and the mask2former loss.
+    """
     def __init__(self, num_classes, matcher_weight_dict={'class': 2, 'mask': 5, 'dice': 5}, 
                  losses=['labels', 'masks'], eos_coef=0.1, ignore_index=255):
         """
@@ -329,6 +350,9 @@ class Mask2FormerLoss(nn.Module):
         return total_loss
 
 class TopologyAwareLoss(nn.Module):
+    """
+    TopologyAwareLoss is a loss function that combines the cross-entropy loss and the topology-aware loss.
+    """
     def __init__(self, ignore_index=255, reduction='mean', boundary_weight=1.0, connectivity_weight=0.1):
         super(TopologyAwareLoss, self).__init__()
         self.ignore_index = ignore_index
@@ -420,4 +444,128 @@ class TopologyAwareLoss(nn.Module):
         mask_np = mask.detach().cpu().numpy()
         _, num_components = nd.label(mask_np)
         return torch.tensor(num_components, device=mask.device).float()
+    
 
+class ClassBalancedCELoss(nn.Module):
+    """
+    ClassBalancedCELoss is a loss function that combines the cross-entropy loss and the class-balanced CE loss.
+    """
+    def __init__(self, samples_per_cls, beta=0.9999, ignore_index=255, reduction='mean'):
+        super(ClassBalancedCELoss, self).__init__()
+        self.beta = beta
+        self.ignore_index = ignore_index
+        self.reduction = reduction
+        # compute effective number of samples per class
+        effective_num = 1.0 - np.power(self.beta, samples_per_cls)
+        weights = (1.0 - self.beta) / (effective_num + 1e-8)
+        # normalize weights so that sum(weights) = num_classes
+        weights = weights / np.sum(weights) * len(samples_per_cls)
+        # register weight tensor
+        weight_tensor = torch.from_numpy(weights).float()
+        self.register_buffer('weight', weight_tensor)
+        # define criterion using class-balanced weights
+        self.criterion = nn.NLLLoss(weight=self.weight, reduction=self.reduction, ignore_index=self.ignore_index)
+
+    def forward(self, pred, target):
+        """Compute the class-balanced cross-entropy loss."""
+        # pred: [N, C, H, W], target: [N, H, W]
+        log_prob = F.log_softmax(pred, dim=1)
+        loss = self.criterion(log_prob, target)
+        return loss
+
+class BatchBalancedCELoss(nn.Module):
+    """
+    BatchBalancedCELoss computes class weights adaptively from the current batch.
+    This avoids the need to pre-compute class frequencies over the entire dataset.
+    """
+    def __init__(self, num_classes=9, ignore_index=255, reduction='mean'):
+        super(BatchBalancedCELoss, self).__init__()
+        self.num_classes = num_classes
+        self.ignore_index = ignore_index
+        self.reduction = reduction
+        
+    def forward(self, pred, target):
+        # Compute class weights from current batch
+        batch_size, _, h, w = pred.size()
+        valid_mask = (target != self.ignore_index)
+        
+        # Count instances of each class in this batch
+        weights = torch.zeros(self.num_classes, device=pred.device)
+        for c in range(self.num_classes):
+            class_pixels = torch.sum((target == c) & valid_mask).float()
+            weights[c] = class_pixels + 1e-10  # avoid division by zero
+        
+        # Inverse frequency weighting
+        weights = 1.0 / weights
+        # Normalize weights
+        weights = weights / weights.sum() * self.num_classes
+        
+        # Apply cross-entropy with computed weights
+        loss = F.cross_entropy(pred, target, weight=weights, 
+                              ignore_index=self.ignore_index, reduction=self.reduction)
+        return loss
+
+class MABalancedCELoss(nn.Module):
+    """
+    Moving Average Balanced Cross Entropy Loss.
+    Maintains a moving average of class frequencies across batches for more stable weights.
+    """
+    def __init__(self, num_classes=9, ignore_index=255, momentum=0.9):
+        super(MABalancedCELoss, self).__init__()
+        self.num_classes = num_classes
+        self.ignore_index = ignore_index
+        self.momentum = momentum
+        # Initialize with equal weights
+        self.register_buffer('class_counts', torch.ones(num_classes))
+        
+    def forward(self, pred, target):
+        # Update class counts with moving average
+        valid_mask = (target != self.ignore_index)
+        batch_counts = torch.zeros(self.num_classes, device=pred.device)
+        
+        for c in range(self.num_classes):
+            batch_counts[c] = torch.sum((target == c) & valid_mask).float() + 1e-10
+            
+        # Update moving average
+        self.class_counts = self.momentum * self.class_counts + (1 - self.momentum) * batch_counts
+        
+        # Compute weights as inverse frequency
+        weights = 1.0 / self.class_counts
+        weights = weights / weights.sum() * self.num_classes
+        
+        # Apply cross-entropy with updated weights
+        loss = F.cross_entropy(pred, target, weight=weights, ignore_index=self.ignore_index)
+        return loss
+
+class MedianFreqCELoss(nn.Module):
+    """
+    Median Frequency Balancing Cross Entropy Loss.
+    Weights each class by the ratio of median frequency to class frequency.
+    This is more robust to outliers than simple inverse frequency.
+    """
+    def __init__(self, num_classes=9, ignore_index=255):
+        super(MedianFreqCELoss, self).__init__()
+        self.num_classes = num_classes
+        self.ignore_index = ignore_index
+        
+    def forward(self, pred, target):
+        # Compute frequencies in batch
+        valid_mask = (target != self.ignore_index)
+        freqs = torch.zeros(self.num_classes, device=pred.device)
+        
+        total_valid = valid_mask.sum().float()
+        for c in range(self.num_classes):
+            class_count = torch.sum((target == c) & valid_mask).float()
+            freqs[c] = class_count / (total_valid + 1e-8)
+        
+        # Get median frequency
+        median_freq = torch.median(freqs[freqs > 0])
+        
+        # Compute weights as median / frequency 
+        weights = torch.zeros_like(freqs)
+        nonzero_mask = freqs > 0
+        weights[nonzero_mask] = median_freq / (freqs[nonzero_mask] + 1e-8)
+        
+        # Apply cross-entropy with weights
+        loss = F.cross_entropy(pred, target, weight=weights, ignore_index=self.ignore_index)
+        return loss   
