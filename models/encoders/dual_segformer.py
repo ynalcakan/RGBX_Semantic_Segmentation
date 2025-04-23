@@ -11,6 +11,7 @@ from ..net_utils import ImprovedFeatureFusionModule as IFFM
 import math
 import time
 from engine.logger import get_logger
+from config import config
 
 logger = get_logger()
 
@@ -232,6 +233,10 @@ class RGBXTransformer(nn.Module):
         super().__init__()
         self.num_classes = num_classes
         self.depths = depths
+        
+        # Get fusion and rectify module from config
+        self.rectify_module = config.rectify_module
+        self.fusion_module = config.fusion_module
 
         # patch_embed
         self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4, in_chans=in_chans, embed_dim=embed_dims[0])
@@ -311,17 +316,41 @@ class RGBXTransformer(nn.Module):
 
         cur += depths[3]
 
-        self.FRMs = nn.ModuleList([
-                    FRM(dim=embed_dims[0], reduction=1),
-                    FRM(dim=embed_dims[1], reduction=1),
-                    FRM(dim=embed_dims[2], reduction=1),
-                    FRM(dim=embed_dims[3], reduction=1)])
+        # Initialize rectify modules
+        if self.rectify_module == 'FRM':
+            logger.info("Using FRM rectify modules")
+            self.RMs = nn.ModuleList([
+                        FRM(dim=embed_dims[0], reduction=1),
+                        FRM(dim=embed_dims[1], reduction=1),
+                        FRM(dim=embed_dims[2], reduction=1),
+                        FRM(dim=embed_dims[3], reduction=1)])
+        elif self.rectify_module == 'IFRM':
+            logger.info("Using IFRM rectify modules")
+            self.RMs = nn.ModuleList([
+                        IFRM(dim=embed_dims[0], reduction=1),
+                        IFRM(dim=embed_dims[1], reduction=1),
+                        IFRM(dim=embed_dims[2], reduction=1),
+                        IFRM(dim=embed_dims[3], reduction=1)])
+        else:
+            raise ValueError(f"Invalid rectify_module: {self.rectify_module}. Must be 'FRM' or 'IFRM'")
 
-        self.FFMs = nn.ModuleList([
-                    FFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
-                    FFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
-                    FFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
-                    FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
+        # Initialize fusion modules
+        if self.fusion_module == 'FFM':
+            logger.info("Using FFM fusion modules")
+            self.FMs = nn.ModuleList([
+                        FFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
+                        FFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
+                        FFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
+                        FFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
+        elif self.fusion_module == 'IFFM':
+            logger.info("Using IFFM fusion modules")
+            self.FMs = nn.ModuleList([
+                        IFFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
+                        IFFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
+                        IFFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
+                        IFFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
+        else:
+            raise ValueError(f"Invalid fusion_module: {self.fusion_module}. Must be 'FFM' or 'IFFM'")
 
         self.apply(self._init_weights)
 
@@ -367,8 +396,8 @@ class RGBXTransformer(nn.Module):
 
         x_rgb = x_rgb.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        x_rgb, x_e = self.FRMs[0](x_rgb, x_e)
-        x_fused = self.FFMs[0](x_rgb, x_e)
+        x_rgb, x_e = self.RMs[0](x_rgb, x_e)
+        x_fused = self.FMs[0](x_rgb, x_e)
         outs.append(x_fused)
         
 
@@ -384,8 +413,8 @@ class RGBXTransformer(nn.Module):
 
         x_rgb = x_rgb.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        x_rgb, x_e = self.FRMs[1](x_rgb, x_e)
-        x_fused = self.FFMs[1](x_rgb, x_e)
+        x_rgb, x_e = self.RMs[1](x_rgb, x_e)
+        x_fused = self.FMs[1](x_rgb, x_e)
         outs.append(x_fused)
         
 
@@ -401,8 +430,8 @@ class RGBXTransformer(nn.Module):
 
         x_rgb = x_rgb.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        x_rgb, x_e = self.FRMs[2](x_rgb, x_e)
-        x_fused = self.FFMs[2](x_rgb, x_e)
+        x_rgb, x_e = self.RMs[2](x_rgb, x_e)
+        x_fused = self.FMs[2](x_rgb, x_e)
         outs.append(x_fused)
         
 
@@ -418,8 +447,8 @@ class RGBXTransformer(nn.Module):
 
         x_rgb = x_rgb.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        x_rgb, x_e = self.FRMs[3](x_rgb, x_e)
-        x_fused = self.FFMs[3](x_rgb, x_e)
+        x_rgb, x_e = self.RMs[3](x_rgb, x_e)
+        x_fused = self.FMs[3](x_rgb, x_e)
         outs.append(x_fused)
         
         return outs
