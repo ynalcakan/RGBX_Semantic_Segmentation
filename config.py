@@ -75,7 +75,8 @@ C.criterion = 'WeightedCrossEntropy2d'    # Possibilities: SigmoidFocalLoss, Cro
 
 """Loss function Config"""
 # WeightedCrossEntropy2d parametersex
-C.class_weights = [0.6, 0.9, 1.0, 1.4, 1.2, 1.5, 1.7, 1.4, 1.2] 
+# C.class_weights = [0.6, 0.9, 1.0, 1.4, 1.2, 1.5, 1.7, 1.4, 1.2] 
+C.class_weights = [0.8, 0.9, 1.2, 1.5, 1.2, 1.5, 1.0, 1.8, 1.5]
 
 # SigmoidFocalLoss parameters
 C.FL_gamma = 4.0     
@@ -88,12 +89,12 @@ C.lr = 1e-4
 C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 0.005       # Reduced from 0.01
-C.batch_size = 8               # Reduced from 8 to 4 due to larger graph size from level 2 features
-C.nepochs = 2            # Enough epochs for convergence
+C.batch_size = 12               # Reduced from 8 to 4 due to larger graph size from level 2 features
+C.nepochs = 60            # Enough epochs for convergence
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
-C.warm_up_epoch = 10
+C.warm_up_epoch = 15
 
 C.fix_bias = True
 C.bn_eps = 1e-3

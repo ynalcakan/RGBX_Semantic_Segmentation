@@ -133,7 +133,6 @@ with Engine(custom_parser=parser) as engine:
     scaler = GradScaler()
 
     for epoch in range(engine.state.epoch, config.nepochs+1):
-        logger.info(f"--> [Epoch {epoch}] Starting...")
         if engine.distributed:
             train_sampler.set_epoch(epoch)
         bar_format = '{desc}[{elapsed}<{remaining},{rate_fmt}]'
@@ -162,7 +161,7 @@ with Engine(custom_parser=parser) as engine:
             modal_xs = modal_xs.cuda(non_blocking=True)
 
             loss = model(imgs, modal_xs, gts)
-            
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
