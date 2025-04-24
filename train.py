@@ -17,7 +17,7 @@ from dataloader.dataloader import get_train_loader
 from models.builder import EncoderDecoder as segmodel
 from dataloader.RGBXDataset import RGBXDataset
 from utils.init_func import init_weight, group_weight
-from utils.lr_policy import WarmUpPolyLR, StepLR, WarmUpCosineLR
+from utils.lr_policy import WarmUpPolyLR, StepLR, CosineAnnealingWarmupLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
@@ -117,8 +117,8 @@ with Engine(custom_parser=parser) as engine:
 
     if config.lr_policy == 'WarmUpPolyLR':
         lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
-    elif config.lr_policy == 'WarmUpCosineLR':
-        lr_policy = WarmUpCosineLR(base_lr, 0, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+    elif config.lr_policy == 'CosineAnnealingWarmupLR':
+        lr_policy = CosineAnnealingWarmupLR(base_lr, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
     else:
         raise NotImplementedError
 

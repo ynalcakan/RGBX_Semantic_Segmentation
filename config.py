@@ -46,7 +46,7 @@ C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Gu
 C.create_graph = True  # Enable graph creation
 C.feature_dim = 320       # Match level 2 native dimension [64, 128, 320, 512]
 C.gat_hidden_dim = 256    # Match feature_dim for simplicity
-C.gat_num_layers = 3      # Reduce from 3 to 2
+C.gat_num_layers = 2      # Reduce from 3 to 2
 C.gat_heads = 4  # Reduced from 8 to 4 for memory efficiency with level 2 features
 C.gat_dropout = 0.1  # Dropout rate for GAT
 C.use_gatv2 = True  # Use GATv2 instead of GAT
@@ -67,7 +67,7 @@ C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.optimizer = 'AdamW'
 # e.g. inverse‑frequency or median‑frequency weights
-C.criterion = 'WeightedCrossEntropy2d'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d
+C.criterion = 'SigmoidFocalLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d
 
 # # inverse‑frequency
 # counts = np.array()
@@ -79,21 +79,21 @@ C.criterion = 'WeightedCrossEntropy2d'    # Possibilities: SigmoidFocalLoss, Cro
 # C.class_weights = [0.6, 0.9, 1.0, 1.4, 1.2, 1.5, 1.7, 1.4, 1.2] 
 # C.class_weights = [0.8, 0.9, 1.2, 1.5, 1.2, 1.5, 1.0, 1.8, 1.5] # previous
 # C.class_weights = [0.2 , 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-C.class_weights = [6.09292401e-02, 1.33798871e-01, 4.56693120e-01, 6.42304688e-01, 9.05816050e-01, 1.11604266e+00, 4.60961076e+00, 2.58301822e+00, 1.66006424e+00]
-
+C.class_weights = [6.09292401e-01, 1.33798871e-01, 4.56693120e-01, 6.42304688e-01, 9.05816050e-01, 1.11604266e+00, 4.60961076e+00, 2.58301822e+00, 1.66006424e+00]
+# -4
 # SigmoidFocalLoss parameters
-C.FL_gamma = 4.0     
+C.FL_gamma = 4.0     # 2.0
 C.FL_alpha = 0.25
 
 """Train Config"""
-C.use_onecycle = True
+C.use_onecycle = False
 C.max_lr = 1e-2
 C.lr = 1e-3
 C.lr_power = 0.9
-C.lr_policy = 'WarmUpCosineLR' # 'WarmUpPolyLR', 'WarmUpCosineLR'
+C.lr_policy = 'CosineAnnealingWarmupLR' # 'WarmUpPolyLR', 'CosineAnnealingWarmupLR'
 C.momentum = 0.9
 C.weight_decay = 0.01       # Reduced from 0.01
-C.batch_size = 4               # Reduced from 8 to 4 due to larger graph size from level 2 features
+C.batch_size = 8               # Reduced from 8 to 4 due to larger graph size from level 2 features
 C.nepochs = 60            # Enough epochs for convergence
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
@@ -112,8 +112,8 @@ C.gat_weight_decay = 0.015   # Keep as is
 # Next 10 epochs: freeze fewer layers
 # Remaining epochs: train all layers
 # Freeze backbone layers
-C.freeze_backbone_layers = 0  # Freeze first layer of backbone
-C.freeze_backbone_epochs  = 10 
+C.freeze_backbone_layers = 1  # Freeze first layer of backbone
+C.freeze_backbone_epochs  = 5 
 
 # Add these to config.py
 C.color_jitter = 0.4

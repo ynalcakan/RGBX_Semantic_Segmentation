@@ -453,3 +453,56 @@ class MedianFreqCELoss(nn.Module):
         # Apply cross-entropy with weights
         loss = F.cross_entropy(pred, target, weight=weights, ignore_index=self.ignore_index)
         return loss
+    
+class Focal_dice_loss(nn.Module):
+    def __init__(self, num_classes=9, ignore_index=255):
+        super(Focal_dice_loss, self).__init__()
+        self.num_classes = num_classes
+        self.ignore_index = ignore_index
+        
+    def loss_labels(self, outputs, targets, indices):
+        """Classification loss (NLL)"""
+        src_logits = outputs['pred_logits']  # [B, num_queries, num_classes+1]
+        
+        # Flatten the targets to match with predictions
+        B, num_queries, _ = src_logits.shape
+        target_classes = torch.full((B, num_queries), self.num_classes,
+                                  dtype=torch.int64, device=src_logits.device)
+        
+        # Create a binary mask for valid (non-ignored) pixels
+        valid_mask = targets != self.ignore_index  # [B, H, W]
+        
+        # For each valid pixel in the target, assign it to the closest query
+        for b in range(B):
+            valid_pixels = valid_mask[b]  # [H, W]
+            if valid_pixels.any():
+                # Get valid target values
+                valid_targets = targets[b][valid_pixels]  # [N]
+                
+                # Get predictions for this batch
+                pred_masks = outputs['pred_masks'][b]  # [num_queries, H, W]
+                pred_masks = pred_masks[:, valid_pixels]  # [num_queries, N]
+                
+                # Compute similarity between queries and target pixels
+                similarity = pred_masks.sigmoid()  # [num_queries, N]
+                
+                # Assign each pixel to the most similar query
+                assignments = similarity.max(dim=0)[1]  # [N]
+                
+                # Update target classes for assigned queries
+                for query_idx in range(num_queries):
+                    query_pixels = assignments == query_idx
+                    if query_pixels.any():
+                        # Most common class for this query's assigned pixels
+                        target_class = valid_targets[query_pixels].mode()[0]
+                        target_classes[b, query_idx] = target_class
+        
+        # Add focal loss
+        ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, 
+                                self.empty_weight, ignore_index=self.num_classes,
+                                reduction='none')
+        p = torch.exp(-ce_loss)
+        loss_ce = ((1 - p) ** 2.0) * ce_loss
+        loss_ce = loss_ce.mean()
+        
+        return loss_ce
