@@ -8,6 +8,7 @@ import argparse
 from torch.nn.parallel import DistributedDataParallel
 import torch
 import torch.nn as nn
+
 C = edict()
 config = C
 cfg = C
@@ -73,7 +74,7 @@ C.criterion = 'WeightedCrossEntropy2d'    # Possibilities: SigmoidFocalLoss, Cro
 # class_weights = inv_freq / inv_freq.sum() * len(inv_freq)
 
 """Loss function Config"""
-# WeightedCrossEntropy2d parameters
+# WeightedCrossEntropy2d parametersex
 C.class_weights = [0.6, 0.9, 1.0, 1.4, 1.2, 1.5, 1.7, 1.4, 1.2] 
 
 # SigmoidFocalLoss parameters
@@ -87,8 +88,8 @@ C.lr = 1e-4
 C.lr_power = 0.9
 C.momentum = 0.9
 C.weight_decay = 0.005       # Reduced from 0.01
-C.batch_size = 4               # Reduced from 8 to 4 due to larger graph size from level 2 features
-C.nepochs = 60            # Enough epochs for convergence
+C.batch_size = 8               # Reduced from 8 to 4 due to larger graph size from level 2 features
+C.nepochs = 2            # Enough epochs for convergence
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -123,7 +124,7 @@ C.patience = 10           # Stop if no improvement for 10 epochs
 C.eval_interval = 1       # Validate every epoch
 
 """Store Config"""
-C.checkpoint_start_epoch = 20
+C.checkpoint_start_epoch = 10
 C.checkpoint_step = 5
 
 """Path Config"""

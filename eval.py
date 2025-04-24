@@ -8,17 +8,16 @@ import torch
 import torch.nn as nn
 
 from config import config
-from utils.pyt_utils import ensure_dir, link_file, load_model, parse_devices
-from utils.visualize import print_iou, show_img
 from engine.evaluator import Evaluator
 from engine.logger import get_logger
-from utils.metric import hist_info, compute_score
-from utils.weighted_metric import compute_weighted_score, print_weighted_iou
 from dataloader.RGBXDataset import RGBXDataset
 from models.builder import EncoderDecoder as segmodel
 from dataloader.dataloader import ValPre
 from utils.transforms import normalize
 from utils.pyt_utils import load_restore_model as load_model
+from utils.metric import hist_info, compute_score, compute_weighted_score
+from utils.pyt_utils import ensure_dir, link_file, load_model, parse_devices
+from utils.visualize import print_iou, print_weighted_iou, show_img
 
 logger = get_logger()
 
@@ -309,12 +308,14 @@ class SegEvaluator(Evaluator):
             result_line = print_weighted_iou(
                 iou, weighted_iou, mean_IoU, weighted_mean_IoU,
                 freq_IoU, mean_pixel_acc, weighted_mean_pixel_acc,
-                pixel_acc, dataset.class_names, no_print=False
+                pixel_acc, self.dataset.class_names, no_print=False
             )
         else:
             # If no weights provided, use standard metrics
-            result_line = print_iou(iou, freq_IoU, mean_pixel_acc, pixel_acc,
-                                dataset.class_names, show_no_back=False)
+            result_line = print_iou(
+                iou, freq_IoU, mean_pixel_acc, pixel_acc,
+                self.dataset.class_names, show_no_back=False
+            )
         
         return result_line
 

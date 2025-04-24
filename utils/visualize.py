@@ -73,4 +73,48 @@ def print_iou(iou, freq_IoU, mean_pixel_acc, pixel_acc, class_names=None, show_n
         print(line)
     return line
 
+def print_weighted_iou(iou, weighted_iou, mean_IoU, weighted_mean_IoU, freq_IoU,
+                       mean_pixel_acc, weighted_mean_pixel_acc, pixel_acc,
+                       class_names=None, show_no_back=False, no_print=False):
+    """
+    Print IoU per class along with weighted IoU and summary metrics.
+    """
+    n = iou.size
+    lines = []
+    # Per-class metrics
+    for i in range(n):
+        if class_names is None:
+            cls = 'Class %d:' % (i+1)
+        else:
+            cls = '%d %s' % (i+1, class_names[i])
+        lines.append('%-8s\tIoU: %.3f%%\tW.IoU: %.3f%%' % (
+            cls, iou[i] * 100, weighted_iou[i] * 100))
+    # Compute mean IoU without background if needed
+    mean_IoU_no_back = np.nanmean(iou[1:])
+    # Summary line
+    if show_no_back:
+        summary = ('----------     %-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%\t'
+                   '%-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%' % (
+                       'mean_IoU', mean_IoU * 100,
+                       'mean_IoU_no_back', mean_IoU_no_back * 100,
+                       'weighted_mean_IoU', weighted_mean_IoU * 100,
+                       'freq_IoU', freq_IoU * 100,
+                       'mean_pixel_acc', mean_pixel_acc * 100,
+                       'weighted_mean_pixel_acc', weighted_mean_pixel_acc * 100,
+                       'pixel_acc', pixel_acc * 100))
+    else:
+        summary = ('----------     %-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%\t'
+                   '%-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%' % (
+                       'mean_IoU', mean_IoU * 100,
+                       'weighted_mean_IoU', weighted_mean_IoU * 100,
+                       'freq_IoU', freq_IoU * 100,
+                       'mean_pixel_acc', mean_pixel_acc * 100,
+                       'weighted_mean_pixel_acc', weighted_mean_pixel_acc * 100,
+                       'pixel_acc', pixel_acc * 100))
+    lines.append(summary)
+    line = "\n".join(lines)
+    if not no_print:
+        print(line)
+    return line
+
 

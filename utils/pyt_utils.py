@@ -249,10 +249,3 @@ def ensure_dir(path):
 def _dbg_interactive(var, value):
     from IPython import embed
     embed()
-
-# Add to config.py
-counts = np.array([93.249, 7.345, 26.786, 0.015, 0.001, 0.001, 0.001, 0.004, 0.001])
-inv_freq = 1.0 / (counts + 0.001)  # Add small constant to avoid division by zero
-# Apply power scaling to boost rare classes even more
-inv_freq_powered = inv_freq ** 1.5
-C.class_weights = inv_freq_powered / inv_freq_powered.mean() * len(inv_freq_powered)

@@ -21,7 +21,6 @@ from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
 from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, WeightedCrossEntropy2d
-from utils.weighted_metric import compute_batch_weighted_iou
 
 from tensorboardX import SummaryWriter
 
@@ -79,13 +78,14 @@ with Engine(custom_parser=parser) as engine:
         criterion2 = TopologyAwareLoss(ignore_index=config.background, reduction='mean')
         criterion = (criterion1, criterion2)
     elif criterion == 'WeightedCrossEntropy2d':
-        wt = torch.tensor(config.class_weights, dtype=torch.float)
-        if torch.cuda.is_available(): wt = wt.cuda()
-        criterion = WeightedCrossEntropy2d(
-        weight=wt,
-        ignore_index=config.background,
-        reduction='mean'
-    )
+        criterion = nn.CrossEntropyLoss(weight=torch.tensor(config.class_weights, dtype=torch.float),reduction='mean', ignore_index=config.background)
+    #     wt = torch.tensor(config.class_weights, dtype=torch.float)
+    #     if torch.cuda.is_available(): wt = wt.cuda()
+    #     criterion = WeightedCrossEntropy2d(
+    #     weight=wt,
+    #     ignore_index=config.background,
+    #     reduction='mean'
+    # )
     else:
         raise NotImplementedError
 
@@ -170,21 +170,14 @@ with Engine(custom_parser=parser) as engine:
             if not isinstance(criterion, tuple):
                 with torch.no_grad():
                     # Get model outputs without loss calculation
-                    logits = model.encode_decode(imgs, modal_xs)
+                    if engine.distributed:
+                        logits = model.module.encode_decode(imgs, modal_xs)
+                    else:
+                        logits = model.encode_decode(imgs, modal_xs)
                 
                 # Now compute the loss separately
                 loss = model(imgs, modal_xs, gts)
-                
-                # Calculate IoU metrics if we have class weights
-                if hasattr(config, 'class_weights'):
-                    batch_iou, batch_weighted_iou = compute_batch_weighted_iou(
-                        logits, gts, config.num_classes, 
-                        config.class_weights, config.background
-                    )
-                    
-                    sum_iou += batch_iou
-                    sum_weighted_iou += batch_weighted_iou
-                    valid_batches += 1
+            
             else:
                 # For tuple criterion, just get the loss
                 loss = model(imgs, modal_xs, gts)
