@@ -16,11 +16,11 @@ from dataloader.dataloader import get_train_loader
 from models.builder import EncoderDecoder as segmodel
 from dataloader.RGBXDataset import RGBXDataset
 from utils.init_func import init_weight, group_weight
-from utils.lr_policy import WarmUpPolyLR, StepLR
+from utils.lr_policy import WarmUpPolyLR, StepLR, OneCycleLR, ReduceLROnPlateauLR, CyclicLR, CosineAnnealingWarmupLR, MultiStageLR, LinearIncreaseLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss
 
 from tensorboardX import SummaryWriter
 
@@ -56,6 +56,18 @@ with Engine(custom_parser=parser) as engine:
     criterion = config.criterion
     if criterion == 'SigmoidFocalLoss':
         criterion = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
+    elif criterion == 'ClassBalancedCELoss':
+        if hasattr(config, 'samples_per_cls'):
+            criterion = ClassBalancedCELoss(samples_per_cls=config.samples_per_cls, beta=config.beta if hasattr(config, 'beta') else 0.9999, ignore_index=config.background, reduction='mean')
+        else:
+            logger.warning("samples_per_cls not found in config, falling back to BatchBalancedCELoss")
+            criterion = BatchBalancedCELoss(num_classes=config.num_classes, ignore_index=config.background, reduction='mean')
+    elif criterion == 'BatchBalancedCELoss':
+        criterion = BatchBalancedCELoss(num_classes=config.num_classes, ignore_index=config.background, reduction='mean')
+    elif criterion == 'MABalancedCELoss':
+        criterion = MABalancedCELoss(num_classes=config.num_classes, ignore_index=config.background, momentum=config.ma_momentum if hasattr(config, 'ma_momentum') else 0.9)
+    elif criterion == 'MedianFreqCELoss':
+        criterion = MedianFreqCELoss(num_classes=config.num_classes, ignore_index=config.background)
     elif criterion == 'CrossEntropyLoss':
         criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
     elif criterion == 'BalanceLoss':
@@ -69,6 +81,11 @@ with Engine(custom_parser=parser) as engine:
     elif criterion == 'CE_Focal':
         # multiple loss function
         criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+        criterion2 = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
+        criterion = (criterion, criterion2)
+    elif criterion == 'MedianFreqCE_Focal':
+        # multiple loss function
+        criterion = MedianFreqCELoss(num_classes=config.num_classes, ignore_index=config.background)
         criterion2 = SigmoidFocalLoss(ignore_label=config.background, gamma=FL_gamma, alpha=FL_alpha, reduction='mean')
         criterion = (criterion, criterion2)
     elif criterion == 'TopologyAwareCE':
@@ -96,7 +113,7 @@ with Engine(custom_parser=parser) as engine:
         params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
         
         if config.optimizer == 'AdamW':
-            optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
+            optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.99), weight_decay=config.weight_decay)
         elif config.optimizer == 'SGDM':
             optimizer = torch.optim.SGD(params_list, lr=base_lr, momentum=config.momentum, weight_decay=config.weight_decay)
         elif config.optimizer == 'LBFGS':
@@ -106,7 +123,25 @@ with Engine(custom_parser=parser) as engine:
 
     # config lr policy
     total_iteration = config.nepochs * config.niters_per_epoch
-    lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+    if config.lr_method == 'WarmUpPolyLR':
+        lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+    elif config.lr_method == 'OneCycleLR':
+        # Using OneCycleLR which often works better for segmentation tasks
+        lr_policy = OneCycleLR(start_lr=base_lr, max_lr=base_lr*4, total_iters=total_iteration, pct_start=0.3)
+    elif config.lr_method == 'StepLR':
+        lr_policy = StepLR(base_lr, config.step_size, config.gamma)
+    elif config.lr_method == 'CosineAnnealingWarmupLR':
+        lr_policy = CosineAnnealingWarmupLR(base_lr, total_iteration, config.warm_up_epoch, config.min_lr)
+    elif config.lr_method == 'ReduceLROnPlateauLR':
+        lr_policy = ReduceLROnPlateauLR(base_lr, config.factor, config.patience, config.min_lr, config.threshold, config.cooldown)
+    elif config.lr_method == 'CyclicLR':
+        lr_policy = CyclicLR(base_lr, config.max_lr, config.cycle_epochs, config.warmup_epochs, total_iteration, config.niters_per_epoch)
+    elif config.lr_method == 'MultiStageLR':
+        lr_policy = MultiStageLR(config.lr_stages)
+    elif config.lr_method == 'LinearIncreaseLR':
+        lr_policy = LinearIncreaseLR(base_lr, config.end_lr, config.warm_iters)
+    else:
+        raise NotImplementedError
 
     if engine.distributed:
         logger.info('.............distributed training.............')
@@ -150,7 +185,11 @@ with Engine(custom_parser=parser) as engine:
             modal_xs = modal_xs.cuda(non_blocking=True)
 
             aux_rate = 0.2
-            loss = model(imgs, modal_xs, gts)
+
+            if isinstance(criterion, tuple):
+                loss, loss_components = model(imgs, modal_xs, gts)
+            else:
+                loss, loss_components = model(imgs, modal_xs, gts)
 
             # reduce the whole loss over multi-gpu
             if engine.distributed:
@@ -172,18 +211,46 @@ with Engine(custom_parser=parser) as engine:
                         + ' Iter {}/{}:'.format(idx + 1, config.niters_per_epoch) \
                         + ' lr=%.4e' % lr \
                         + ' loss=%.4f total_loss=%.4f' % (reduce_loss.item(), (sum_loss / (idx + 1)))
+                
+                # Add individual loss components only for multiple losses
+                if isinstance(criterion, tuple):
+                    # Initialize loss_sums dict if it doesn't exist
+                    if not hasattr(engine, 'loss_sums'):
+                        engine.loss_sums = {key: 0.0 for key in loss_components.keys()}
+                    
+                    for key in loss_components.keys():
+                        reduced_val = all_reduce_tensor(loss_components[key], world_size=engine.world_size)
+                        engine.loss_sums[key] += reduced_val.item()
+                        print_str += ' %s=%.4f' % (key, engine.loss_sums[key]/(idx+1))
             else:
                 sum_loss += loss
                 print_str = 'Epoch {}/{}'.format(epoch, config.nepochs) \
                         + ' Iter {}/{}:'.format(idx + 1, config.niters_per_epoch) \
                         + ' lr=%.4e' % lr \
                         + ' loss=%.4f total_loss=%.4f' % (loss, (sum_loss / (idx + 1)))
+                
+                # Add individual loss components only for multiple losses (non-distributed case)
+                if isinstance(criterion, tuple):
+                    # Initialize loss_sums dict if it doesn't exist
+                    if not hasattr(engine, 'loss_sums'):
+                        engine.loss_sums = {key: 0.0 for key in loss_components.keys()}
+                    
+                    for key in loss_components.keys():
+                        engine.loss_sums[key] += loss_components[key].item()
+                        print_str += ' %s=%.4f' % (key, engine.loss_sums[key]/(idx+1))
 
             del loss
             pbar.set_description(print_str, refresh=False)
         
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
+            
+            # Add individual loss components to TensorBoard if using multiple losses
+            if isinstance(criterion, tuple) and hasattr(engine, 'loss_sums'):
+                for key in engine.loss_sums.keys():
+                    tb.add_scalar(f'train_{key}', engine.loss_sums[key] / len(pbar), epoch)
+                # Reset loss sums for next epoch
+                engine.loss_sums = {key: 0.0 for key in engine.loss_sums.keys()}
 
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if engine.distributed and (engine.local_rank == 0):
