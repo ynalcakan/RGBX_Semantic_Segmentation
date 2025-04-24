@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
+from torch.cuda.amp import autocast, GradScaler
 
 from config import config
 from dataloader.dataloader import get_train_loader
@@ -20,7 +21,7 @@ from utils.lr_policy import WarmUpPolyLR, StepLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, WeightedCrossEntropy2d
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss
 
 from tensorboardX import SummaryWriter
 
@@ -79,13 +80,6 @@ with Engine(custom_parser=parser) as engine:
         criterion = (criterion1, criterion2)
     elif criterion == 'WeightedCrossEntropy2d':
         criterion = nn.CrossEntropyLoss(weight=torch.tensor(config.class_weights, dtype=torch.float),reduction='mean', ignore_index=config.background)
-    #     wt = torch.tensor(config.class_weights, dtype=torch.float)
-    #     if torch.cuda.is_available(): wt = wt.cuda()
-    #     criterion = WeightedCrossEntropy2d(
-    #     weight=wt,
-    #     ignore_index=config.background,
-    #     reduction='mean'
-    # )
     else:
         raise NotImplementedError
 
@@ -136,6 +130,8 @@ with Engine(custom_parser=parser) as engine:
         model.train()
         logger.info('begin trainning:')
     
+    scaler = GradScaler()
+
     for epoch in range(engine.state.epoch, config.nepochs+1):
         logger.info(f"--> [Epoch {epoch}] Starting...")
         if engine.distributed:
@@ -165,30 +161,12 @@ with Engine(custom_parser=parser) as engine:
             gts = gts.cuda(non_blocking=True)
             modal_xs = modal_xs.cuda(non_blocking=True)
 
-            # Pass inputs to model (graph processing is now integrated)
-            # For non-tuple criterion, get both loss and logits
-            if not isinstance(criterion, tuple):
-                with torch.no_grad():
-                    # Get model outputs without loss calculation
-                    if engine.distributed:
-                        logits = model.module.encode_decode(imgs, modal_xs)
-                    else:
-                        logits = model.encode_decode(imgs, modal_xs)
-                
-                # Now compute the loss separately
-                loss = model(imgs, modal_xs, gts)
-            
-            else:
-                # For tuple criterion, just get the loss
-                loss = model(imgs, modal_xs, gts)
-
-            # reduce the whole loss over multi-gpu
-            if engine.distributed:
-                reduce_loss = all_reduce_tensor(loss, world_size=engine.world_size)
+            loss = model(imgs, modal_xs, gts)
             
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
             current_idx = (epoch- 1) * config.niters_per_epoch + idx 
             lr = lr_policy.get_lr(current_idx)
 
@@ -196,6 +174,7 @@ with Engine(custom_parser=parser) as engine:
                 optimizer.param_groups[i]['lr'] = lr
 
             if engine.distributed:
+                reduce_loss = all_reduce_tensor(loss, world_size=engine.world_size)
                 sum_loss += reduce_loss.item()
                 print_str = 'Epoch {}/{}'.format(epoch, config.nepochs) \
                         + ' Iter {}/{}:'.format(idx + 1, config.niters_per_epoch) \
@@ -211,7 +190,7 @@ with Engine(custom_parser=parser) as engine:
 
             del loss
             pbar.set_description(print_str, refresh=False)
-        
+
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
             
