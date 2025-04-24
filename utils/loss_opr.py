@@ -453,15 +453,3 @@ class MedianFreqCELoss(nn.Module):
         # Apply cross-entropy with weights
         loss = F.cross_entropy(pred, target, weight=weights, ignore_index=self.ignore_index)
         return loss
-    
-# class WeightedCrossEntropy2d(nn.Module):
-#     def __init__(self, weight=None, ignore_index=255, reduction='mean'):
-#         super().__init__()
-#         self.criterion = nn.CrossEntropyLoss(
-#             weight=weight, 
-#             ignore_index=ignore_index, 
-#             reduction=reduction
-#         )
-
-#     def forward(self, logits, target):
-#         return self.criterion(logits, target)

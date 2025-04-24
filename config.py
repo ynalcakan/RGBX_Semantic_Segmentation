@@ -44,11 +44,11 @@ C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Gu
 
 # Graph creation parameters
 C.create_graph = True  # Enable graph creation
-C.feature_dim = 320       # Match level 2 native dimension
-C.gat_hidden_dim = 320    # Match feature_dim for simplicity
-C.gat_num_layers = 2      # Reduce from 3 to 2
-C.gat_heads = 2  # Reduced from 8 to 4 for memory efficiency with level 2 features
-C.gat_dropout = 0.15  # Dropout rate for GAT
+C.feature_dim = 320       # Match level 2 native dimension [64, 128, 320, 512]
+C.gat_hidden_dim = 256    # Match feature_dim for simplicity
+C.gat_num_layers = 3      # Reduce from 3 to 2
+C.gat_heads = 4  # Reduced from 8 to 4 for memory efficiency with level 2 features
+C.gat_dropout = 0.1  # Dropout rate for GAT
 C.use_gatv2 = True  # Use GATv2 instead of GAT
 C.graph_fusion_mode = 'concat'  # Options: 'add', 'weighted', 'concat'
 C.graph_feature_level = 2  # Feature level to use for graph: 0 (finest) to 3 (coarsest)
@@ -67,7 +67,7 @@ C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.optimizer = 'AdamW'
 # e.g. inverse‑frequency or median‑frequency weights
-C.criterion = 'CrossEntropyLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d
+C.criterion = 'WeightedCrossEntropy2d'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d
 
 # # inverse‑frequency
 # counts = np.array()
@@ -77,7 +77,9 @@ C.criterion = 'CrossEntropyLoss'    # Possibilities: SigmoidFocalLoss, CrossEntr
 """Loss function Config"""
 # WeightedCrossEntropy2d parametersex
 # C.class_weights = [0.6, 0.9, 1.0, 1.4, 1.2, 1.5, 1.7, 1.4, 1.2] 
-C.class_weights = [0.8, 0.9, 1.2, 1.5, 1.2, 1.5, 1.0, 1.8, 1.5]
+# C.class_weights = [0.8, 0.9, 1.2, 1.5, 1.2, 1.5, 1.0, 1.8, 1.5] # previous
+# C.class_weights = [0.2 , 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+C.class_weights = [6.09292401e-02, 1.33798871e-01, 4.56693120e-01, 6.42304688e-01, 9.05816050e-01, 1.11604266e+00, 4.60961076e+00, 2.58301822e+00, 1.66006424e+00]
 
 # SigmoidFocalLoss parameters
 C.FL_gamma = 4.0     
@@ -85,17 +87,18 @@ C.FL_alpha = 0.25
 
 """Train Config"""
 C.use_onecycle = True
-C.max_lr = 5e-4
-C.lr = 1e-4
+C.max_lr = 1e-2
+C.lr = 1e-3
 C.lr_power = 0.9
 C.lr_policy = 'WarmUpCosineLR' # 'WarmUpPolyLR', 'WarmUpCosineLR'
 C.momentum = 0.9
-C.weight_decay = 0.005       # Reduced from 0.01
+C.weight_decay = 0.01       # Reduced from 0.01
 C.batch_size = 4               # Reduced from 8 to 4 due to larger graph size from level 2 features
 C.nepochs = 60            # Enough epochs for convergence
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
-C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
+# C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
+C.train_scale_array = [0.75, 1, 1.25, 1.5]
 C.warm_up_epoch = 15
 
 C.fix_bias = True
@@ -110,6 +113,7 @@ C.gat_weight_decay = 0.015   # Keep as is
 # Remaining epochs: train all layers
 # Freeze backbone layers
 C.freeze_backbone_layers = 0  # Freeze first layer of backbone
+C.freeze_backbone_epochs  = 10 
 
 # Add these to config.py
 C.color_jitter = 0.4
@@ -190,29 +194,3 @@ if __name__ == '__main__':
             model.cuda()
             model = DistributedDataParallel(model, device_ids=[engine.local_rank], 
                                            output_device=engine.local_rank, find_unused_parameters=False)
-
-def __init__(self, segformer_model, in_channels, hidden_channels, out_channels, 
-             num_layers=2, heads=4, dropout=0.1, use_gatv2=True):
-    super().__init__()
-    
-    # Feature extractor from the segformer
-    self.feature_extractor = SegformerFeatureExtractor(segformer_model)
-    
-    # Get the graph feature level
-    self.feature_level = getattr(segformer_model.cfg, 'graph_feature_level', 3)
-    
-    # Get input channels based on feature level if different from provided
-    if self.feature_level != 3:
-        # Segformer MiT-B2 has these channel counts at different levels
-        level_channels = [64, 128, 320, 512]  # Default for MiT-B2
-        if hasattr(segformer_model, 'channels'):
-            level_channels = segformer_model.channels
-        in_channels = level_channels[self.feature_level]
-    
-    # Modality fusion layer for combining RGB and X features
-    self.modality_fusion = nn.Sequential(
-        nn.Linear(in_channels * 2, hidden_channels),
-        nn.LayerNorm(hidden_channels),
-        nn.ReLU(),
-        nn.Dropout(dropout)
-    )

@@ -79,9 +79,13 @@ with Engine(custom_parser=parser) as engine:
         criterion2 = TopologyAwareLoss(ignore_index=config.background, reduction='mean')
         criterion = (criterion1, criterion2)
     elif criterion == 'WeightedCrossEntropy2d':
-        criterion = nn.CrossEntropyLoss(weight=torch.tensor(config.class_weights, dtype=torch.float),reduction='mean', ignore_index=config.background)
+        criterion = nn.CrossEntropyLoss(weight=torch.tensor(config.class_weights, dtype=torch.float),reduction='mean', ignore_index=config.background, label_smoothing=0.1)
     # elif criterion == 'MedianFreqCELoss':
     #     criterion = MedianFreqCELoss(ignore_index=config.background, reduction='mean')
+    elif criterion == 'Focal_dice_loss':
+        criterion1 = config.FDL_alpha * FocalLoss2d(ignore_index=config.background, reduction='mean')
+        criterion2 = config.FDL_beta * DiceLoss(ignore_index=config.background, reduction='mean')
+        criterion = (criterion1, criterion2)
     else:
         raise NotImplementedError
 
@@ -154,6 +158,35 @@ with Engine(custom_parser=parser) as engine:
         sum_iou = 0
         sum_weighted_iou = 0
         valid_batches = 0
+
+        # --- UNFREEZE AFTER CONFIGURED NUMBER OF EPOCHS ---
+        freeze_epochs = getattr(config, 'freeze_backbone_epochs', 0)
+        if freeze_epochs > 0 and epoch == freeze_epochs + 1:
+            logger.info(f"Unfreezing first {config.freeze_backbone_layers} backbone layers at epoch {epoch}")
+            n_freeze = config.freeze_backbone_layers
+
+            # target the underlying backbone (if using DDP, unwrap with .module)
+            backbone = model.module.backbone if hasattr(model, 'module') else model.backbone
+
+            # unfreeze the first n_freeze child‐modules
+            for idx, block in enumerate(backbone.children()):
+                if idx >= n_freeze:
+                    break
+                for p in block.parameters():
+                    p.requires_grad = True
+
+            # rebuild optimizer so these params are now in param_groups
+            params_list = []
+            params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
+            optimizer = torch.optim.AdamW(
+                params_list,
+                lr = lr_policy.get_lr((epoch-1)*config.niters_per_epoch),
+                betas=(0.9, 0.999),
+                weight_decay=config.weight_decay
+            )
+            # replace in engine state (used by some engines)
+            engine.state.optimizer = optimizer
+        # ---------------------------------------------------
 
         for idx in pbar:
             engine.update_iteration(epoch, idx)

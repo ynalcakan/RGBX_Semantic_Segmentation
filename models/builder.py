@@ -98,6 +98,21 @@ class EncoderDecoder(nn.Module):
             from .encoders.dual_segformer import mit_b2 as backbone
             self.backbone = backbone(norm_fuse=norm_layer)
 
+        # Freeze backbone early layers if requested
+        n_freeze = getattr(cfg, 'freeze_backbone_layers', 0)
+        if n_freeze > 0:
+            # If backbone supports built-in freezing, use its method
+            if hasattr(self.backbone, 'frozen_stages'):
+                self.backbone.frozen_stages = n_freeze
+                self.backbone._freeze_stages()
+            else:
+                # fallback: freeze the first n_freeze children modules
+                for idx, module in enumerate(self.backbone.children()):
+                    if idx >= n_freeze:
+                        break
+                    for param in module.parameters():
+                        param.requires_grad = False
+
         self.aux_head = None
 
         # Get decoder embed dim from config, defaulting to feature_dim if available
@@ -201,16 +216,8 @@ class EncoderDecoder(nn.Module):
                     if m.bias is not None:
                         nn.init.constant_(m.bias, 0)
                 elif isinstance(m, (nn.BatchNorm2d, nn.LayerNorm)):
-                    nn.init.constant_(m.weight, 1)
-                    nn.init.constant_(m.bias, 0)
-            
-            # Initialize fusion layer if it exists (for backward compatibility)
-            # Note: In the new design, fusion_layer is created dynamically during forward pass
-            if self.fusion_mode == 'concat' and hasattr(self, 'fusion_layer'):
-                init_weight(self.fusion_layer, nn.init.kaiming_normal_,
-                        self.norm_layer, cfg.bn_eps, cfg.bn_momentum,
-                        mode='fan_in', nonlinearity='relu')
-                
+                    nn.init.constant_(m.weight, 1)           # Initialize fusion layer if it exists (for backward compatibility)
+
     def encode_decode(self, rgb, modal_x):
         # Get device from input tensor
         device = rgb.device
