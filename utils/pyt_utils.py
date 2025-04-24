@@ -177,13 +177,22 @@ def load_model(model, model_file, is_restore=False):
             new_state_dict[name] = v
         state_dict = new_state_dict
 
-    model.load_state_dict(state_dict, strict=True)
-    ckpt_keys = set(state_dict.keys())
+    # Filter out criterion-related keys
+    filtered_state_dict = {k: v for k, v in state_dict.items() if not k.startswith('criterion.')}
+    
+    model.load_state_dict(filtered_state_dict, strict=False)
+    ckpt_keys = set(filtered_state_dict.keys())
     own_keys = set(model.state_dict().keys())
     missing_keys = own_keys - ckpt_keys
     unexpected_keys = ckpt_keys - own_keys
 
+    if len(missing_keys) > 0:
+        logger.info('Missing keys: {}'.format(missing_keys))
+    if len(unexpected_keys) > 0:
+        logger.info('Unexpected keys: {}'.format(unexpected_keys))
+
     del state_dict
+    del filtered_state_dict
     t_end = time.time()
     logger.info(
         "Load model, Time usage:\n\tIO: {}, initialize parameters: {}".format(
