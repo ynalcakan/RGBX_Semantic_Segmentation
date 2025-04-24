@@ -96,6 +96,20 @@ class CyclicLR(BaseLR):
         momentum = self.max_momentum - 0.5 * (self.max_momentum - self.min_momentum) * (1 + cos_progress)
         return lr, momentum
     
+class WarmUpCosineLR(BaseLR):
+    def __init__(self, start_lr, min_lr, total_iters, warmup_iters):
+        self.start_lr = start_lr
+        self.min_lr = min_lr
+        self.total_iters = float(total_iters)
+        self.warmup_iters = warmup_iters
+
+    def get_lr(self, cur_iter):
+        if cur_iter < self.warmup_iters:
+            return self.start_lr * cur_iter / self.warmup_iters
+        else:
+            progress = (cur_iter - self.warmup_iters) / (self.total_iters - self.warmup_iters)
+            cosine = 0.5 * (1 + math.cos(math.pi * progress))
+            return self.min_lr + (self.start_lr - self.min_lr) * cosine
 
 class StepLR(BaseLR):
     def __init__(self, start_lr, step_size, gamma):

@@ -17,7 +17,7 @@ from dataloader.dataloader import get_train_loader
 from models.builder import EncoderDecoder as segmodel
 from dataloader.RGBXDataset import RGBXDataset
 from utils.init_func import init_weight, group_weight
-from utils.lr_policy import WarmUpPolyLR, StepLR
+from utils.lr_policy import WarmUpPolyLR, StepLR, WarmUpCosineLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
@@ -80,6 +80,8 @@ with Engine(custom_parser=parser) as engine:
         criterion = (criterion1, criterion2)
     elif criterion == 'WeightedCrossEntropy2d':
         criterion = nn.CrossEntropyLoss(weight=torch.tensor(config.class_weights, dtype=torch.float),reduction='mean', ignore_index=config.background)
+    # elif criterion == 'MedianFreqCELoss':
+    #     criterion = MedianFreqCELoss(ignore_index=config.background, reduction='mean')
     else:
         raise NotImplementedError
 
@@ -104,10 +106,17 @@ with Engine(custom_parser=parser) as engine:
         optimizer = torch.optim.LBFGS(params_list, lr=base_lr, max_iter=20, max_eval=None, tolerance_grad=1e-7, tolerance_change=1e-9, history_size=100, line_search_fn=None)
     else:
         raise NotImplementedError
-
-    # config lr policy
+        # config lr policy
     total_iteration = config.nepochs * config.niters_per_epoch
-    lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+
+# scheduler can be implemented here
+
+    if config.lr_policy == 'WarmUpPolyLR':
+        lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+    elif config.lr_policy == 'WarmUpCosineLR':
+        lr_policy = WarmUpCosineLR(base_lr, 0, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+    else:
+        raise NotImplementedError
 
     if engine.distributed:
         logger.info('.............distributed training.............')

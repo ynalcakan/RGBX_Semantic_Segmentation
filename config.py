@@ -8,6 +8,7 @@ import argparse
 from torch.nn.parallel import DistributedDataParallel
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import OneCycleLR
 
 C = edict()
 config = C
@@ -46,7 +47,7 @@ C.create_graph = True  # Enable graph creation
 C.feature_dim = 320       # Match level 2 native dimension
 C.gat_hidden_dim = 320    # Match feature_dim for simplicity
 C.gat_num_layers = 2      # Reduce from 3 to 2
-C.gat_heads = 4  # Reduced from 8 to 4 for memory efficiency with level 2 features
+C.gat_heads = 2  # Reduced from 8 to 4 for memory efficiency with level 2 features
 C.gat_dropout = 0.15  # Dropout rate for GAT
 C.use_gatv2 = True  # Use GATv2 instead of GAT
 C.graph_fusion_mode = 'concat'  # Options: 'add', 'weighted', 'concat'
@@ -66,7 +67,7 @@ C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.optimizer = 'AdamW'
 # e.g. inverse‑frequency or median‑frequency weights
-C.criterion = 'WeightedCrossEntropy2d'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d
+C.criterion = 'CrossEntropyLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d
 
 # # inverse‑frequency
 # counts = np.array()
@@ -84,12 +85,13 @@ C.FL_alpha = 0.25
 
 """Train Config"""
 C.use_onecycle = True
-C.max_lr = 3e-4
+C.max_lr = 5e-4
 C.lr = 1e-4
 C.lr_power = 0.9
+C.lr_policy = 'WarmUpCosineLR' # 'WarmUpPolyLR', 'WarmUpCosineLR'
 C.momentum = 0.9
 C.weight_decay = 0.005       # Reduced from 0.01
-C.batch_size = 12               # Reduced from 8 to 4 due to larger graph size from level 2 features
+C.batch_size = 4               # Reduced from 8 to 4 due to larger graph size from level 2 features
 C.nepochs = 60            # Enough epochs for convergence
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
@@ -107,7 +109,7 @@ C.gat_weight_decay = 0.015   # Keep as is
 # Next 10 epochs: freeze fewer layers
 # Remaining epochs: train all layers
 # Freeze backbone layers
-C.freeze_backbone_layers = 1  # Freeze first layer of backbone
+C.freeze_backbone_layers = 0  # Freeze first layer of backbone
 
 # Add these to config.py
 C.color_jitter = 0.4
