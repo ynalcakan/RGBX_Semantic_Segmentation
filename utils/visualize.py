@@ -53,24 +53,56 @@ def get_ade_colors():
 
 def print_iou(iou, freq_IoU, mean_pixel_acc, pixel_acc, class_names=None, show_no_back=False, no_print=False):
     n = iou.size
+    
+    # Create a more structured and readable output
     lines = []
+    
+    # Add a header line with decorative formatting
+    header = "=" * 80
+    lines.append(header)
+    lines.append("{:^80}".format("SEMANTIC SEGMENTATION EVALUATION RESULTS"))
+    lines.append(header)
+    
+    # Add per-class IoU results in a tabular format
+    lines.append("\n{:<40} {:>10}".format("CLASS", "IoU (%)"))
+    lines.append("-" * 55)
+    
+    # Add each class with its IoU
     for i in range(n):
         if class_names is None:
-            cls = 'Class %d:' % (i+1)
+            cls = 'Class %d' % (i)
         else:
-            cls = '%d %s' % (i+1, class_names[i])
-        lines.append('%-8s\t%.3f%%' % (cls, iou[i] * 100))
+            cls = '%d - %s' % (i, class_names[i])
+        
+        # Format each line with class name and IoU percentage
+        lines.append("{:<40} {:>9.2f}%".format(cls, iou[i] * 100))
+    
+    # Calculate mean IoU and mean IoU without background
     mean_IoU = np.nanmean(iou)
-    mean_IoU_no_back = np.nanmean(iou[1:])
+    mean_IoU_no_back = np.nanmean(iou[1:]) if n > 1 else mean_IoU
+    
+    # Add a separator line
+    lines.append("\n" + "-" * 80)
+    
+    # Add summary metrics in a structured format
+    lines.append("{:<25} {:>9.2f}%".format("Mean IoU:", mean_IoU * 100))
+    
     if show_no_back:
-        lines.append('----------     %-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%' % ('mean_IoU', mean_IoU * 100, 'mean_IU_no_back', mean_IoU_no_back*100,
-                                                                                                                'freq_IoU', freq_IoU*100, 'mean_pixel_acc', mean_pixel_acc*100, 'pixel_acc',pixel_acc*100))
-    else:
-        lines.append('----------     %-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%\t%-8s\t%.3f%%' % ('mean_IoU', mean_IoU * 100, 'freq_IoU', freq_IoU*100, 
-                                                                                                    'mean_pixel_acc', mean_pixel_acc*100, 'pixel_acc',pixel_acc*100))
-    line = "\n".join(lines)
+        lines.append("{:<25} {:>9.2f}%".format("Mean IoU (no background):", mean_IoU_no_back * 100))
+    
+    lines.append("{:<25} {:>9.2f}%".format("Frequency Weighted IoU:", freq_IoU * 100))
+    lines.append("{:<25} {:>9.2f}%".format("Mean Pixel Accuracy:", mean_pixel_acc * 100))
+    lines.append("{:<25} {:>9.2f}%".format("Pixel Accuracy:", pixel_acc * 100))
+    
+    # Add a closing line
+    lines.append("=" * 80)
+    
+    # Join all lines with newlines
+    output = "\n".join(lines)
+    
     if not no_print:
-        print(line)
-    return line
+        print(output)
+    
+    return output
 
 
