@@ -32,22 +32,22 @@ class EncoderDecoder(nn.Module):
             logger.info('Using backbone: SegNeXt-Tiny')
             from .encoders.dual_segnext import segnext_tiny as backbone
             self.channels = [32, 64, 160, 256]
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone()
         elif cfg.backbone == 'segnext_s':
             logger.info('Using backbone: SegNeXt-Small')
-            from .encoders.dual_segnext import segnext_s as backbone
+            from .encoders.dual_segnext import segnext_small as backbone
             self.channels = [64, 128, 320, 512]
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone()
         elif cfg.backbone == 'segnext_b':
             logger.info('Using backbone: SegNeXt-Base')
-            from .encoders.dual_segnext import segnext_b as backbone
+            from .encoders.dual_segnext import segnext_base as backbone
             self.channels = [128, 256, 512, 1024]
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone()
         elif cfg.backbone == 'segnext_large':
             logger.info('Using backbone: SegNeXt-Large')
             from .encoders.dual_segnext import segnext_large as backbone
             self.channels = [96, 192, 384, 768]
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone()
         elif cfg.backbone == 'resnet50':
             logger.info('Using backbone: ResNet-50')
             from .encoders.dual_resnet import dual_resnet50 as backbone
@@ -105,6 +105,16 @@ class EncoderDecoder(nn.Module):
             logger.info('Using MLP Decoderpp')
             from .decoders.MLPDecoderpp import DecoderHead
             self.decode_head = DecoderHead(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=cfg.decoder_embed_dim)
+        
+        elif cfg.decoder == 'MLPDecoderB':
+            logger.info('Using Decoder Design B (Stage 4 → head, Stage 3 → MLP)')
+            from .decoders.MLPDecoder import DecoderHeadB
+            self.decode_head = DecoderHeadB(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=cfg.decoder_embed_dim)
+        
+        elif cfg.decoder == 'MLPDecoderC':
+            logger.info('Using Decoder Design C (Stage 4 → concat, Stage 3 → head)')
+            from .decoders.MLPDecoder import DecoderHeadC
+            self.decode_head = DecoderHeadC(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=cfg.decoder_embed_dim)
         
         elif cfg.decoder == 'UPernet':
             logger.info('Using Upernet Decoder')
