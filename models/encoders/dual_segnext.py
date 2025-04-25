@@ -10,16 +10,17 @@ from ..net_utils import ImprovedFeatureFusionModule as IFFM
 import math
 import time
 from engine.logger import get_logger
+from config import config
 
 logger = get_logger()
 
-config = {}
-config['SyncBN_MOM'] = 3e-4
-config['BN_MOM'] = 0.9
-config['norm_typ'] = 'sync_bn'
+bn_config = {}
+bn_config['SyncBN_MOM'] = 3e-4
+bn_config['BN_MOM'] = 0.9
+bn_config['norm_typ'] = 'batch_norm'
 from torch.nn import SyncBatchNorm as SynchronizedBatchNorm2d
 
-norm_layer = partial(SynchronizedBatchNorm2d, momentum=float(config['SyncBN_MOM']))
+norm_layer = partial(SynchronizedBatchNorm2d, momentum=float(bn_config['SyncBN_MOM']))
 
 class myLayerNorm(nn.Module):
     def __init__(self, inChannels):
@@ -37,19 +38,19 @@ class myLayerNorm(nn.Module):
 
 
 class NormLayer(nn.Module):
-    def __init__(self, inChannels, norm_type=config['norm_typ']):
+    def __init__(self, inChannels, norm_type=bn_config['norm_typ']):
         super().__init__()
         self.inChannels = inChannels
         self.norm_type = norm_type
         if norm_type == 'batch_norm':
             # print('Adding Batch Norm layer') # for testing
-            self.norm = nn.BatchNorm2d(inChannels, eps=1e-5, momentum=float(config['BN_MOM']))
+            self.norm = nn.BatchNorm2d(inChannels, eps=1e-5, momentum=float(bn_config['BN_MOM']))
         elif norm_type == 'sync_bn':
             # print('Adding Sync-Batch Norm layer') # for testing
             self.norm = norm_layer(inChannels)
         elif norm_type == 'layer_norm':
             # print('Adding Layer Norm layer') # for testing
-            self.norm == nn.myLayerNorm(inChannels)
+            self.norm = myLayerNorm(inChannels)
         else:
             raise NotImplementedError
 
@@ -142,18 +143,17 @@ def resize(input,
 
 
 class DownSample(nn.Module):
-    def __init__(self, kernelSize=3, stride=2, in_channels=3, embed_dim=768):
+    def __init__(self, in_channels, embed_dim, stride=2, kernelSize=3):
         super().__init__()
         self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=(kernelSize, kernelSize),
                               stride=stride, padding=(kernelSize//2, kernelSize//2))
         # stride 4 => 4x down sample
         # stride 2 => 2x down sample
     def forward(self, x):
-
         x = self.proj(x)
-        B, C, H, W = x.size()
+        # B, C, H, W = x.size()
         # x = x.flatten(2).transpose(1,2)
-        return x, H, W
+        return x
     
 #//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -186,7 +186,7 @@ class ConvBNRelu(nn.Module):
         self.conv = nn.Conv2d(inChannels, outChannels, kernel_size=kernel,
                               padding=padding, stride=stride, dilation=dilation,
                               groups=groups, bias=False)
-        self.norm = NormLayer(outChannels, norm_type=config['norm_typ'])
+        self.norm = NormLayer(outChannels, norm_type=bn_config['norm_typ'])
         self.act = nn.ReLU(inplace=True)
     
     def forward(self, x):
@@ -284,6 +284,8 @@ class SegNextEncoder(nn.Module):
         super().__init__()
         self.depths = depths
         self.out_indices = out_indices
+        self.rectify_module = config.rectify_module
+        self.fusion_module = config.fusion_module
 
         self.stem = nn.Sequential(
             nn.Conv2d(in_chans, dims[0], kernel_size=4, stride=4),
@@ -312,13 +314,29 @@ class SegNextEncoder(nn.Module):
                 self.stages.append(DownSample(dims[i], dims[i+1], 2))
                 self.extra_stages.append(DownSample(dims[i], dims[i+1], 2))
 
-        self.FRMs = nn.ModuleList([
-            IFRM(dim=dims[i], reduction=1) for i in range(4)
-        ])
+        # Initialize rectify modules
+        if self.rectify_module == 'FRM':    
+            self.FRMs = nn.ModuleList([
+                FRM(dim=dims[i], reduction=1) for i in range(4)
+            ])
+        elif self.rectify_module == 'IFRM':
+            self.FRMs = nn.ModuleList([
+                IFRM(dim=dims[i], reduction=1) for i in range(4)
+            ])
+        else:
+            raise ValueError(f"Invalid rectify_module: {self.rectify_module}. Must be 'FRM' or 'IFRM'")
 
-        self.FFMs = nn.ModuleList([
-            IFFM(dim=dims[i], reduction=1) for i in range(4)
-        ])
+        # Initialize fusion modules
+        if self.fusion_module == 'FFM':
+            self.FFMs = nn.ModuleList([
+                FFM(dim=dims[i], reduction=1, num_heads=8) for i in range(4)
+            ])
+        elif self.fusion_module == 'IFFM':
+            self.FFMs = nn.ModuleList([
+                IFFM(dim=dims[i], reduction=1, num_heads=8) for i in range(4)
+            ])
+        else:
+            raise ValueError(f"Invalid fusion_module: {self.fusion_module}. Must be 'FFM' or 'IFFM'")
 
         self.norm = nn.ModuleList([NormLayer(dims[i]) for i in range(4)])
         self.extra_norm = nn.ModuleList([NormLayer(dims[i]) for i in range(4)])
@@ -331,25 +349,71 @@ class SegNextEncoder(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
+    def init_weights(self, pretrained=None):
+        if isinstance(pretrained, str):
+            logger.info(f'Loading pretrained weights from {pretrained}')
+            load_dualpath_model(self, pretrained)
+        elif pretrained is None:
+            logger.info('No pretrained weights, using random initialization')
+        else:
+            raise TypeError('pretrained must be a str or None')
+
     def forward_features(self, x_rgb, x_e):
         x_rgb = self.stem(x_rgb)
         x_e = self.extra_stem(x_e)
         outs = []
-
-        for i, (stage, extra_stage) in enumerate(zip(self.stages, self.extra_stages)):
-            x_rgb = stage(x_rgb)
-            x_e = extra_stage(x_e)
-
-            if i in self.out_indices:
-                norm_layer = self.norm[len(outs)]
-                extra_norm_layer = self.extra_norm[len(outs)]
-                x_rgb_out = norm_layer(x_rgb)
-                x_e_out = extra_norm_layer(x_e)
-
-                x_rgb_out, x_e_out = self.FRMs[len(outs)](x_rgb_out, x_e_out)
-                x_fused = self.FFMs[len(outs)](x_rgb_out, x_e_out)
-                outs.append(x_fused)
-
+        
+        # Process each stage separately
+        stage_outputs = []
+        extra_stage_outputs = []
+        
+        # Stage 1
+        x_rgb = self.stages[0](x_rgb)
+        x_e = self.extra_stages[0](x_e)
+        stage_outputs.append(x_rgb)
+        extra_stage_outputs.append(x_e)
+        
+        # Downsample after stage 1
+        x_rgb = self.stages[1](x_rgb)  # This is a DownSample layer
+        x_e = self.extra_stages[1](x_e)
+        
+        # Stage 2
+        x_rgb = self.stages[2](x_rgb)
+        x_e = self.extra_stages[2](x_e)
+        stage_outputs.append(x_rgb)
+        extra_stage_outputs.append(x_e)
+        
+        # Downsample after stage 2
+        x_rgb = self.stages[3](x_rgb)  # This is a DownSample layer
+        x_e = self.extra_stages[3](x_e)
+        
+        # Stage 3
+        x_rgb = self.stages[4](x_rgb)
+        x_e = self.extra_stages[4](x_e)
+        stage_outputs.append(x_rgb)
+        extra_stage_outputs.append(x_e)
+        
+        # Downsample after stage 3
+        x_rgb = self.stages[5](x_rgb)  # This is a DownSample layer
+        x_e = self.extra_stages[5](x_e)
+        
+        # Stage 4
+        x_rgb = self.stages[6](x_rgb)
+        x_e = self.extra_stages[6](x_e)
+        stage_outputs.append(x_rgb)
+        extra_stage_outputs.append(x_e)
+        
+        # Process output stages
+        for i in range(4):
+            norm_layer = self.norm[i]
+            extra_norm_layer = self.extra_norm[i]
+            x_rgb_out = norm_layer(stage_outputs[i])
+            x_e_out = extra_norm_layer(extra_stage_outputs[i])
+            
+            x_rgb_out, x_e_out = self.FRMs[i](x_rgb_out, x_e_out)
+            x_fused = self.FFMs[i](x_rgb_out, x_e_out)
+            outs.append(x_fused)
+            
         return outs
 
     def forward(self, x_rgb, x_e):
@@ -399,7 +463,7 @@ class segnext_small(SegNextEncoder):
 class segnext_base(SegNextEncoder):
     def __init__(self, **kwargs):
         super(segnext_base, self).__init__(
-            depths=[3, 3, 27, 3], dims=[64, 128, 320, 512], **kwargs)
+            depths=[3, 3, 27, 3], dims=[128, 256, 512, 1024], **kwargs)
 
 class segnext_large(SegNextEncoder):
     def __init__(self, **kwargs):
