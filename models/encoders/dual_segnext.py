@@ -24,7 +24,7 @@ norm_layer = partial(SynchronizedBatchNorm2d, momentum=float(config['SyncBN_MOM'
 class myLayerNorm(nn.Module):
     def __init__(self, inChannels):
         super().__init__()
-        self.norm == nn.LayerNorm(inChannels, eps=1e-5)
+        self.norm = nn.LayerNorm(inChannels, eps=1e-5)
 
     def forward(self, x):
         # reshaping only to apply Layer Normalization layer
@@ -49,7 +49,7 @@ class NormLayer(nn.Module):
             self.norm = norm_layer(inChannels)
         elif norm_type == 'layer_norm':
             # print('Adding Layer Norm layer') # for testing
-            self.norm == nn.myLayerNorm(inChannels)
+            self.norm = myLayerNorm(inChannels)
         else:
             raise NotImplementedError
 
@@ -198,13 +198,13 @@ class ConvBNRelu(nn.Module):
         return x
 
 class SeprableConv2d(nn.Module):
-    def __init__(self, inChannels, outChannels, kernal_size=3, bias=False):
-        self.dwconv = nn.Conv2d(inChannels, inChannels, kernal_size=kernal_size,
+    def __init__(self, inChannels, outChannels, kernel_size=3, bias=False):
+        super().__init__()
+        self.dwconv = nn.Conv2d(inChannels, inChannels, kernel_size=kernel_size,
                                 groups=inChannels, bias=bias)
-        self.pwconv = nn.Conv2d(inChannels, inChannels, kernal_size=1, bias=bias)
+        self.pwconv = nn.Conv2d(inChannels, outChannels, kernel_size=1, bias=bias)
 
     def forward(self, x):
-
         x = self.dwconv(x)
         x = self.pwconv(x)
         

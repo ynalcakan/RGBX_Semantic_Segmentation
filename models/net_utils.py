@@ -20,13 +20,19 @@ class ChannelWeights(nn.Module):
                     nn.Sigmoid())
 
     def forward(self, x1, x2):
-        B, _, H, W = x1.shape
-        x = torch.cat((x1, x2), dim=1)
-        avg = self.avg_pool(x).view(B, self.dim * 2)
-        max = self.max_pool(x).view(B, self.dim * 2)
-        y = torch.cat((avg, max), dim=1) # B 4C
-        y = self.mlp(y).view(B, self.dim * 2, 1)
-        channel_weights = y.reshape(B, 2, self.dim, 1, 1).permute(1, 0, 2, 3, 4) # 2 B C 1 1
+        B, C, H, W = x1.shape
+        # Ensure input channels match expected dimensions
+        assert C == self.dim, f"Input channel dimension {C} does not match expected dimension {self.dim}"
+        
+        x = torch.cat((x1, x2), dim=1)  # B, 2*dim, H, W
+        avg = self.avg_pool(x).flatten(1)  # B, 2*dim
+        max = self.max_pool(x).flatten(1)  # B, 2*dim
+        
+        y = torch.cat((avg, max), dim=1)  # B, 4*dim
+        y = self.mlp(y)  # B, 2*dim
+        
+        # Reshape to the expected output format
+        channel_weights = y.view(B, 2, self.dim, 1, 1).permute(1, 0, 2, 3, 4)  # 2, B, dim, 1, 1
         return channel_weights
     
 
@@ -51,18 +57,23 @@ class ImprovedChannelWeights(nn.Module):
         )
 
     def forward(self, x1, x2):
-        B, _, H, W = x1.shape
-        x = torch.cat((x1, x2), dim=1)
-        avg = self.avg_pool(x).view(B, self.dim * 2)
-        max = self.max_pool(x).view(B, self.dim * 2)
-        y = torch.cat((avg, max), dim=1)
-        y = self.mlp(y)
+        B, C, H, W = x1.shape
+        # Ensure input channels match expected dimensions
+        assert C == self.dim, f"Input channel dimension {C} does not match expected dimension {self.dim}"
+        
+        x = torch.cat((x1, x2), dim=1)  # B, 2*dim, H, W
+        avg = self.avg_pool(x).flatten(1)  # B, 2*dim
+        max = self.max_pool(x).flatten(1)  # B, 2*dim
+        
+        y = torch.cat((avg, max), dim=1)  # B, 4*dim
+        y = self.mlp(y)  # B, 2*dim
         
         # Gating mechanism
         g = self.gate(y)
         y = y * g
         
-        channel_weights = y.view(B, 2, self.dim, 1, 1).permute(1, 0, 2, 3, 4)
+        # Reshape to the expected output format
+        channel_weights = y.view(B, 2, self.dim, 1, 1).permute(1, 0, 2, 3, 4)  # 2, B, dim, 1, 1
         return channel_weights
     
 
@@ -128,6 +139,8 @@ class FeatureRectifyModule(nn.Module):
         self.lambda_s = lambda_s
         self.channel_weights = ChannelWeights(dim=dim, reduction=reduction)
         self.spatial_weights = SpatialWeights(dim=dim, reduction=reduction)
+        
+        self.apply(self._init_weights)
     
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -145,11 +158,17 @@ class FeatureRectifyModule(nn.Module):
                 m.bias.data.zero_()
     
     def forward(self, x1, x2):
+        # Check dimensions
+        B, C, H, W = x1.shape
+        assert x1.shape == x2.shape, f"Input shapes do not match: {x1.shape} vs {x2.shape}"
+        assert C == self.channel_weights.dim, f"Input channel dimension {C} does not match expected dimension {self.channel_weights.dim}"
+        
         channel_weights = self.channel_weights(x1, x2)
         spatial_weights = self.spatial_weights(x1, x2)
         out_x1 = x1 + self.lambda_c * channel_weights[1] * x2 + self.lambda_s * spatial_weights[1] * x2
         out_x2 = x2 + self.lambda_c * channel_weights[0] * x1 + self.lambda_s * spatial_weights[0] * x1
-        return out_x1, out_x2 
+        
+        return out_x1, out_x2
 
 
 class ImprovedFeatureRectifyModule(nn.Module):
@@ -164,8 +183,30 @@ class ImprovedFeatureRectifyModule(nn.Module):
         
         # Layer normalization
         self.norm = nn.LayerNorm(dim)
+        
+        self.apply(self._init_weights)
+    
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv2d):
+            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+            fan_out //= m.groups
+            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
+            if m.bias is not None:
+                m.bias.data.zero_()
 
     def forward(self, x1, x2):
+        # Check dimensions
+        B, C, H, W = x1.shape
+        assert x1.shape == x2.shape, f"Input shapes do not match: {x1.shape} vs {x2.shape}"
+        assert C == self.channel_weights.dim, f"Input channel dimension {C} does not match expected dimension {self.channel_weights.dim}"
+        
         channel_weights = self.channel_weights(x1, x2)
         spatial_weights = self.spatial_weights(x1, x2)
         
@@ -174,12 +215,10 @@ class ImprovedFeatureRectifyModule(nn.Module):
         out_x2 = x2 + self.lambda_channel * channel_weights[0] * x1 + self.lambda_spatial * spatial_weights[0] * x1
         
         # Apply layer normalization
-        out_x1 = self.norm(out_x1.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-        out_x2 = self.norm(out_x2.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        out_x1 = self.norm(out_x1.permute(0, 2, 3, 1)).permute(0, 3, 1, 2).contiguous()
+        out_x2 = self.norm(out_x2.permute(0, 2, 3, 1)).permute(0, 3, 1, 2).contiguous()
         
         return out_x1, out_x2
-
-
 
 
 # ---------------------  Feature Fusion Module --------------------- #

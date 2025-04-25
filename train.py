@@ -11,6 +11,10 @@ import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
 
+import warnings
+# Filter out the specific DDP warning about stride mismatches
+warnings.filterwarnings("ignore", message="Grad strides do not match bucket view strides")
+
 from config import config
 from dataloader.dataloader import get_train_loader
 from models.builder import EncoderDecoder as segmodel
@@ -148,8 +152,19 @@ with Engine(custom_parser=parser) as engine:
         logger.info('.............distributed training.............')
         if torch.cuda.is_available():
             model.cuda()
-            model = DistributedDataParallel(model, device_ids=[engine.local_rank], 
-                                            output_device=engine.local_rank, find_unused_parameters=False)
+            
+            # Make all parameters contiguous to avoid DDP stride mismatch warnings
+            for param in model.parameters():
+                if param.requires_grad and not param.is_contiguous():
+                    param.data = param.data.contiguous()
+            
+            # Use bucket-view and allow unused params so DDP can handle dynamic graphs without stride mismatches
+            model = DistributedDataParallel(
+                model,
+                device_ids=[engine.local_rank],
+                output_device=engine.local_rank,
+                find_unused_parameters=True
+            )
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
@@ -170,6 +185,7 @@ with Engine(custom_parser=parser) as engine:
         bar_format = '{desc}[{elapsed}<{remaining},{rate_fmt}]'
         pbar = tqdm(range(config.niters_per_epoch), file=sys.stdout,
                     bar_format=bar_format)
+
         dataloader = iter(train_loader)
 
         sum_loss = 0
@@ -241,7 +257,7 @@ with Engine(custom_parser=parser) as engine:
                         print_str += ' %s=%.4f' % (key, engine.loss_sums[key]/(idx+1))
 
             del loss
-            pbar.set_description(print_str, refresh=False)
+            pbar.set_description(print_str, refresh=True)
         
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
