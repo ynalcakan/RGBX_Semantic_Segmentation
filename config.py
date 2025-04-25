@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import OneCycleLR
 
+
 C = edict()
 config = C
 cfg = C
@@ -46,12 +47,12 @@ C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Gu
 C.create_graph = True  # Enable graph creation
 C.feature_dim = 320       # Match level 2 native dimension [64, 128, 320, 512]
 C.gat_hidden_dim = 256    # Match feature_dim for simplicity
-C.gat_num_layers = 2      # Reduce from 3 to 2
+C.gat_num_layers = 3      # Reduce from 3 to 2w
 C.gat_heads = 4  # Reduced from 8 to 4 for memory efficiency with level 2 features
 C.gat_dropout = 0.1  # Dropout rate for GAT
 C.use_gatv2 = True  # Use GATv2 instead of GAT
 C.graph_fusion_mode = 'concat'  # Options: 'add', 'weighted', 'concat'
-C.graph_feature_level = 2  # Feature level to use for graph: 0 (finest) to 3 (coarsest)
+C.graph_feature_level = 3  # Feature level to use for graph: 0 (finest/coarsest?) to 3 (coarsest/finest)
 
 """Image Config"""
 C.background = 255
@@ -64,10 +65,10 @@ C.norm_std = np.array([0.229, 0.224, 0.225])
 C.backbone = 'mit_b2' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
 C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
 C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
-C.decoder_embed_dim = 512
+C.decoder_embed_dim = 256
 C.optimizer = 'AdamW'
 # e.g. inverse‑frequency or median‑frequency weights
-C.criterion = 'SigmoidFocalLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d
+C.criterion = 'Focal_dice_loss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d, Focal_dice_loss
 
 # # inverse‑frequency
 # counts = np.array()
@@ -82,8 +83,12 @@ C.criterion = 'SigmoidFocalLoss'    # Possibilities: SigmoidFocalLoss, CrossEntr
 C.class_weights = [6.09292401e-01, 1.33798871e-01, 4.56693120e-01, 6.42304688e-01, 9.05816050e-01, 1.11604266e+00, 4.60961076e+00, 2.58301822e+00, 1.66006424e+00]
 # -4
 # SigmoidFocalLoss parameters
-C.FL_gamma = 4.0     # 2.0
-C.FL_alpha = 0.25
+C.FL_gamma = 2.0     # 2.0, 4.0
+C.FL_alpha = 0.4 # 0.25, 0.5
+# Focal_dice_loss parameters
+C.FDL_alpha = 0.5 # Focal loss weight
+C.FDL_beta = 0.5 # Dice loss weight
+C.FDL_eps = 1e-6 # Dice loss epsilon
 
 """Train Config"""
 C.use_onecycle = False
@@ -92,9 +97,9 @@ C.lr = 1e-3
 C.lr_power = 0.9
 C.lr_policy = 'CosineAnnealingWarmupLR' # 'WarmUpPolyLR', 'CosineAnnealingWarmupLR'
 C.momentum = 0.9
-C.weight_decay = 0.01       # Reduced from 0.01
+C.weight_decay = 0.02       # Reduced from 0.01
 C.batch_size = 8               # Reduced from 8 to 4 due to larger graph size from level 2 features
-C.nepochs = 60            # Enough epochs for convergence
+C.nepochs = 200            # Enough epochs for convergence
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 0
 # C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -106,14 +111,14 @@ C.bn_eps = 1e-3
 C.bn_momentum = 0.1
 
 # GAT training config
-C.gat_weight_decay = 0.015   # Keep as is
+C.gat_weight_decay = 0.02   # Keep as is
 
 # First 10 epochs: freeze more layers
 # Next 10 epochs: freeze fewer layers
 # Remaining epochs: train all layers
 # Freeze backbone layers
 C.freeze_backbone_layers = 1  # Freeze first layer of backbone
-C.freeze_backbone_epochs  = 5 
+C.freeze_backbone_epochs  = 200 
 
 # Add these to config.py
 C.color_jitter = 0.4
@@ -131,7 +136,7 @@ C.patience = 10           # Stop if no improvement for 10 epochs
 C.eval_interval = 1       # Validate every epoch
 
 """Store Config"""
-C.checkpoint_start_epoch = 10
+C.checkpoint_start_epoch = 5
 C.checkpoint_step = 5
 
 """Path Config"""

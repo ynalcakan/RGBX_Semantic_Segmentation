@@ -126,7 +126,6 @@ class EncoderDecoder(nn.Module):
             logger.info('Using MLP Decoderpp')
             from .decoders.MLPDecoderpp import DecoderHead
             self.decode_head = DecoderHead(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=decoder_embed_dim)
-        
         elif cfg.decoder == 'UPernet':
             logger.info('Using Upernet Decoder')
             from .decoders.UPernet import UPerHead
@@ -135,7 +134,6 @@ class EncoderDecoder(nn.Module):
             self.aux_index = 2
             self.aux_rate = 0.4
             self.aux_head = FCNHead(self.channels[2], cfg.num_classes, norm_layer=norm_layer)
-        
         elif cfg.decoder == 'deeplabv3+':
             logger.info('Using Decoder: DeepLabV3+')
             from .decoders.deeplabv3plus import DeepLabV3Plus as Head
@@ -144,7 +142,6 @@ class EncoderDecoder(nn.Module):
             self.aux_index = 2
             self.aux_rate = 0.4
             self.aux_head = FCNHead(self.channels[2], cfg.num_classes, norm_layer=norm_layer)
-
         elif cfg.decoder == 'mask2former':
             logger.info('Using Mask2Former Decoder')
             from .decoders.mask2former import Mask2Former
@@ -216,8 +213,16 @@ class EncoderDecoder(nn.Module):
                     if m.bias is not None:
                         nn.init.constant_(m.bias, 0)
                 elif isinstance(m, (nn.BatchNorm2d, nn.LayerNorm)):
-                    nn.init.constant_(m.weight, 1)           # Initialize fusion layer if it exists (for backward compatibility)
-
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+            
+            # Initialize fusion layer if it exists (for backward compatibility)
+            # Note: In the new design, fusion_layer is created dynamically during forward pass
+            if self.fusion_mode == 'concat' and hasattr(self, 'fusion_layer'):
+                init_weight(self.fusion_layer, nn.init.kaiming_normal_,
+                        self.norm_layer, cfg.bn_eps, cfg.bn_momentum,
+                        mode='fan_in', nonlinearity='relu')
+                
     def encode_decode(self, rgb, modal_x):
         # Get device from input tensor
         device = rgb.device

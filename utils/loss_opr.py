@@ -454,55 +454,78 @@ class MedianFreqCELoss(nn.Module):
         loss = F.cross_entropy(pred, target, weight=weights, ignore_index=self.ignore_index)
         return loss
     
-class Focal_dice_loss(nn.Module):
-    def __init__(self, num_classes=9, ignore_index=255):
-        super(Focal_dice_loss, self).__init__()
+class DiceLoss(nn.Module):
+    def __init__(self, num_classes=9, ignore_index=255, eps=1e-6):
+        super(DiceLoss, self).__init__()
         self.num_classes = num_classes
         self.ignore_index = ignore_index
-        
-    def loss_labels(self, outputs, targets, indices):
-        """Classification loss (NLL)"""
-        src_logits = outputs['pred_logits']  # [B, num_queries, num_classes+1]
-        
-        # Flatten the targets to match with predictions
-        B, num_queries, _ = src_logits.shape
-        target_classes = torch.full((B, num_queries), self.num_classes,
-                                  dtype=torch.int64, device=src_logits.device)
-        
-        # Create a binary mask for valid (non-ignored) pixels
-        valid_mask = targets != self.ignore_index  # [B, H, W]
-        
-        # For each valid pixel in the target, assign it to the closest query
-        for b in range(B):
-            valid_pixels = valid_mask[b]  # [H, W]
-            if valid_pixels.any():
-                # Get valid target values
-                valid_targets = targets[b][valid_pixels]  # [N]
-                
-                # Get predictions for this batch
-                pred_masks = outputs['pred_masks'][b]  # [num_queries, H, W]
-                pred_masks = pred_masks[:, valid_pixels]  # [num_queries, N]
-                
-                # Compute similarity between queries and target pixels
-                similarity = pred_masks.sigmoid()  # [num_queries, N]
-                
-                # Assign each pixel to the most similar query
-                assignments = similarity.max(dim=0)[1]  # [N]
-                
-                # Update target classes for assigned queries
-                for query_idx in range(num_queries):
-                    query_pixels = assignments == query_idx
-                    if query_pixels.any():
-                        # Most common class for this query's assigned pixels
-                        target_class = valid_targets[query_pixels].mode()[0]
-                        target_classes[b, query_idx] = target_class
-        
-        # Add focal loss
-        ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, 
-                                self.empty_weight, ignore_index=self.num_classes,
-                                reduction='none')
-        p = torch.exp(-ce_loss)
-        loss_ce = ((1 - p) ** 2.0) * ce_loss
-        loss_ce = loss_ce.mean()
-        
-        return loss_ce
+        self.eps = eps
+
+    def forward(self, outputs, targets):
+        """
+        Parameters:
+            outputs: predicted segmentation map [B, C, H, W], where C is the number of classes
+            targets: ground truth segmentation map [B, H, W]
+        """
+        # Get predictions and targets
+        pred_masks = outputs  # [B, C, H, W] - predicted class probabilities (logits)
+        target_masks = targets  # [B, H, W] - ground truth labels
+        # Create mask for valid pixels (not ignored)
+        valid_mask = (target_masks != self.ignore_index)
+        # Replace ignore_index in targets to class 0 to avoid out-of-bounds in one-hot
+        masked_targets = target_masks.clone()
+        masked_targets[~valid_mask] = 0  # map ignored labels to class 0
+        target_masks = masked_targets
+        # One-hot encode the target masks (for multi-class segmentation)
+        target_masks = F.one_hot(target_masks, num_classes=self.num_classes).permute(0, 3, 1, 2).float()  # [B, C, H, W]
+        # Zero out ignore_index pixels so they do not contribute
+        valid_mask = valid_mask.unsqueeze(1).float()  # [B,1,H,W]
+        target_masks = target_masks * valid_mask
+        # Sigmoid the predictions
+        pred_masks = torch.sigmoid(pred_masks)  # Apply sigmoid to get probabilities
+        # Zero out ignored pixels in predictions
+        pred_masks = pred_masks * valid_mask
+
+        # Calculate Dice loss for each class
+        dice_loss = 0
+        for i in range(self.num_classes):
+            # Select the i-th classw
+            target_class = target_masks[:, i, :, :]
+            pred_class = pred_masks[:, i, :, :]
+
+            # Calculate intersection and union for Dice score
+            intersection = (pred_class * target_class).sum(dim=(1, 2))
+            union = pred_class.sum(dim=(1, 2)) + target_class.sum(dim=(1, 2))
+
+            # Compute Dice score for this class
+            dice_score = (2.0 * intersection + self.eps) / (union + self.eps)
+
+            # Add Dice loss (1 - Dice score)
+            dice_loss += (1 - dice_score).mean()
+
+        return dice_loss / self.num_classes
+    
+class FocalDiceLoss(nn.Module):
+    """
+    Combined Focal + Dice loss with per-term weights.
+      loss = alpha * focal_loss + beta * dice_loss
+    """
+    def __init__(self, alpha: float = 0.5, beta: float = 0.5,
+                 num_classes: int = 9, ignore_index: int = 255):
+        super(FocalDiceLoss, self).__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.focal = FocalLoss2d(ignore_index=ignore_index, reduction='mean')
+        self.dice  = DiceLoss(num_classes=num_classes,
+                              ignore_index=ignore_index,
+                              eps=1e-6)
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters:
+            pred:   [B, C, H, W] raw logits
+            target: [B, H, W] integer labels
+        """
+        f = self.focal(pred, target)
+        d = self.dice(pred, target)
+        return self.alpha * f + self.beta * d

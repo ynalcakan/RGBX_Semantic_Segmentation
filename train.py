@@ -21,8 +21,7 @@ from utils.lr_policy import WarmUpPolyLR, StepLR, CosineAnnealingWarmupLR
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss
-
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, MedianFreqCELoss, FocalDiceLoss
 from tensorboardX import SummaryWriter
 
 parser = argparse.ArgumentParser()
@@ -80,12 +79,12 @@ with Engine(custom_parser=parser) as engine:
         criterion = (criterion1, criterion2)
     elif criterion == 'WeightedCrossEntropy2d':
         criterion = nn.CrossEntropyLoss(weight=torch.tensor(config.class_weights, dtype=torch.float),reduction='mean', ignore_index=config.background, label_smoothing=0.1)
-    # elif criterion == 'MedianFreqCELoss':
-    #     criterion = MedianFreqCELoss(ignore_index=config.background, reduction='mean')
+    elif criterion == 'MedianFreqCELoss':
+        criterion = MedianFreqCELoss(ignore_index=config.background, reduction='mean')
     elif criterion == 'Focal_dice_loss':
-        criterion1 = config.FDL_alpha * FocalLoss2d(ignore_index=config.background, reduction='mean')
-        criterion2 = config.FDL_beta * DiceLoss(ignore_index=config.background, reduction='mean')
-        criterion = (criterion1, criterion2)
+        # Combined focal + dice with weights
+        criterion = FocalDiceLoss( alpha = config.FDL_alpha, beta = config.FDL_beta, num_classes  = config.num_classes, ignore_index = config.background )
+    
     else:
         raise NotImplementedError
 
@@ -101,6 +100,7 @@ with Engine(custom_parser=parser) as engine:
     base_lr = config.lr
     params_list = []
     params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
+    # params_list = init_weight(params_list, model, BatchNorm2d, base_lr)  # bn_momentum
 
     if config.optimizer == 'AdamW':
         optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
