@@ -45,14 +45,14 @@ C.class_names =  ["Unlabeled", "Car", "Person", "Bike", "Curve", "Car Stop", "Gu
 
 # Graph creation parameters
 C.create_graph = True  # Enable graph creation
-C.feature_dim = 320       # Match level 2 native dimension [64, 128, 320, 512]
+C.feature_dim = 256       # Match level 2 native dimension [64, 128, 320, 512]
 C.gat_hidden_dim = 256    # Match feature_dim for simplicity
-C.gat_num_layers = 3      # Reduce from 3 to 2w
-C.gat_heads = 4  # Reduced from 8 to 4 for memory efficiency with level 2 features
+C.gat_num_layers = 2      # Reduce from 3 to 2w
+C.gat_heads = 8  # Reduced from 8 to 4 for memory efficiency with level 2 features
 C.gat_dropout = 0.1  # Dropout rate for GAT
-C.use_gatv2 = True  # Use GATv2 instead of GAT
+C.use_gatv2 = False  # Use GATv2 instead of GAT
 C.graph_fusion_mode = 'concat'  # Options: 'add', 'weighted', 'concat'
-C.graph_feature_level = 3  # Feature level to use for graph: 0 (finest/coarsest?) to 3 (coarsest/finest)
+C.graph_feature_level = 2  # Feature level to use for graph: 0 (finest/coarsest?) to 3 (coarsest/finest)
 
 """Image Config"""
 C.background = 255
@@ -65,10 +65,10 @@ C.norm_std = np.array([0.229, 0.224, 0.225])
 C.backbone = 'mit_b2' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
 C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
 C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
-C.decoder_embed_dim = 256
-C.optimizer = 'AdamW'
+C.decoder_embed_dim = 512
+C.optimizer = 'SGDM' # 'AdamW', 'SGDM', 'LBFGS'
 # e.g. inverse‑frequency or median‑frequency weights
-C.criterion = 'Focal_dice_loss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d, Focal_dice_loss
+C.criterion = 'SigmoidFocalLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, FocalLoss2d, BalanceLoss, MedianFreqCELoss, WeightedCrossEntropy2d, Focal_dice_loss
 
 # # inverse‑frequency
 # counts = np.array()
