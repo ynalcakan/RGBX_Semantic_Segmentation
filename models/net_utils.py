@@ -517,8 +517,8 @@ class GraphConstructor(nn.Module):
     def compute_coordinate_similarity(self, X):
         # Euclidean distance.
         # X: Tensor of shape (H * W, C), where C is the feature dimension for each pixel.
-        # H, W, C = X.shape
-        C, H, W, _ = X.shape
+        H, W, C = X.shape
+        # C, H, W, _ = X.shape
 
         nodes = X.view(-1, C)  # Flatten the HxW dimension into nodes of shape (H*W, C)
 
