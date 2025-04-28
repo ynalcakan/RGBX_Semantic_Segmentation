@@ -8,6 +8,7 @@ from ..net_utils import FeatureFusionModule as FFM
 from ..net_utils import FeatureRectifyModule as FRM
 from ..net_utils import ImprovedFeatureRectifyModule as IFRM
 from ..net_utils import ImprovedFeatureFusionModule as IFFM
+from ..net_utils import GraphFeatureFusionModule as GFM
 import math
 import time
 from engine.logger import get_logger
@@ -360,8 +361,15 @@ class RGBXTransformer(nn.Module):
                         IFFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
                         IFFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
                         IFFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
+        elif self.fusion_module == 'GFM':
+            logger.info("Using GFM fusion modules")
+            self.FMs = nn.ModuleList([
+                        GFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
+                        GFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
+                        GFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
+                        GFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
         else:
-            raise ValueError(f"Invalid fusion_module: {self.fusion_module}. Must be 'FFM' or 'IFFM'")
+            raise ValueError(f"Invalid fusion_module: {self.fusion_module}. Must be 'FFM' or 'IFFM' or 'GFM'")
 
         self.apply(self._init_weights)
 

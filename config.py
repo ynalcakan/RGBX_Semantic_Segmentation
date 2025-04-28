@@ -55,7 +55,7 @@ C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
 C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
-C.fusion_module = 'FFM'  # Possibilities: FFM, IFFM
+C.fusion_module = 'GFM'  # Possibilities: FFM, IFFM, GFM
 C.optimizer = 'AdamW'
 C.criterion = 'CE_SoftEdgeLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, CE_CannyEdgeLoss, CE_SoftEdgeLoss
 

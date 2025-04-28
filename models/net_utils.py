@@ -4,8 +4,8 @@ import torch.nn.functional as F
 
 from timm.models.layers import trunc_normal_
 import math
-
-
+from torch_geometric.nn import GCNConv, SAGEConv, global_mean_pool, global_max_pool, global_add_pool
+from torch_geometric.utils import dense_to_sparse
 # Feature Rectify Module
 class ChannelWeights(nn.Module):
     def __init__(self, dim, reduction=1):
@@ -388,7 +388,23 @@ class ImprovedChannelEmbed(nn.Module):
         x = self.channel_embed(x)
         out = self.norm(residual + x)
         return out
-
+          
+class GraphChannelEmbed(nn.Module):
+    def __init__(self, in_channels, out_channels, reduction=1, norm_layer=nn.BatchNorm2d):
+        super(GraphChannelEmbed, self).__init__()
+        self.out_channels = out_channels
+        self.residual = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        self.graph = GraphConstructor(k=0.5, r=1.0)
+        self.channel_embed = GCNNetwork(in_channels=in_channels, out_channels=out_channels, reduction=reduction, norm_layer=norm_layer)
+        self.norm = norm_layer(out_channels)
+        
+    def forward(self, x, H, W):
+        B, N, _C = x.shape
+        x = x.permute(0, 2, 1).reshape(B, _C, H, W).contiguous()
+        residual = self.residual(x)
+        x = self.channel_embed(x)
+        out = self.norm(residual + x)
+        return out
 
 class FeatureFusionModule(nn.Module):
     def __init__(self, dim, reduction=1, num_heads=None, norm_layer=nn.BatchNorm2d):
@@ -454,3 +470,178 @@ class ImprovedFeatureFusionModule(nn.Module):
         merge = self.channel_emb(merge, H, W)
         
         return merge
+    
+class GraphFeatureFusionModule(nn.Module):
+    def __init__(self, dim, reduction=1, num_heads=None, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        self.cross = CrossPath(dim=dim, reduction=reduction, num_heads=num_heads)
+        self.channel_emb = GraphChannelEmbed(in_channels=dim*2, out_channels=dim, reduction=reduction, norm_layer=norm_layer)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv2d):
+            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+            fan_out //= m.groups
+            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
+            if m.bias is not None:
+                m.bias.data.zero_()
+
+    def forward(self, x1, x2):
+        B, C, H, W = x1.shape
+        x1 = x1.flatten(2).transpose(1, 2)
+        x2 = x2.flatten(2).transpose(1, 2)
+        x1, x2 = self.cross(x1, x2) 
+        merge = torch.cat((x1, x2), dim=-1)
+        merge = self.channel_emb(merge, H, W)
+        
+        return merge
+    
+class GraphConstructor(nn.Module):
+    def __init__(self, k=0.5, r=1.0):
+        super(GraphConstructor, self).__init__()
+        self.k = k # Controlling the weight between coordinate similarity and feature similarity.
+        self.r = r # The bandwidth for the RBF kernel used in coordinate similarity calculation.
+
+    def rbf_kernel(self, x, y):
+        # RBF kernel to measure the similarity between two points
+        dist = torch.norm(x - y, p=2, dim=-1)
+        return torch.exp(- (dist ** 2) / (2 * self.r ** 2))
+
+    def compute_coordinate_similarity(self, X):
+        # Euclidean distance.
+        # X: Tensor of shape (H * W, C), where C is the feature dimension for each pixel.
+        # H, W, C = X.shape
+        C, H, W, _ = X.shape
+
+        nodes = X.view(-1, C)  # Flatten the HxW dimension into nodes of shape (H*W, C)
+
+        Ad = torch.zeros(H * W, H * W)  # Initialize similarity matrix
+
+        # Compute the coordinate similarity between all pairs of nodes
+        for i in range(H * W):
+            for j in range(i + 1, H * W):
+                # Get the coordinates (i, j) in 2D grid space
+                si = torch.tensor([i // W, i % W])  # Coordinate of node i
+                sj = torch.tensor([j // W, j % W])  # Coordinate of node j
+
+                similarity = self.rbf_kernel(si.float(), sj.float())  # Apply RBF on coordinates
+                Ad[i, j] = similarity
+                Ad[j, i] = similarity  # Symmetric matrix
+
+        # Normalize the coordinate similarity matrix
+        Ad = Ad / Ad.sum(dim=-1, keepdim=True)
+        
+        return Ad
+
+    def compute_feature_similarity(self, X):
+        # Compute the feature similarity As between nodes based on their feature vectors.
+        # X: Tensor of shape (H * W, C), where C is the feature dimension for each pixel.
+        H, W, C = X.shape
+        nodes = X.view(-1, C)  # Flatten the HxW -> (H*W, C)
+
+        As = torch.matmul(nodes, nodes.t())  # Compute pairwise similarity using Hadamard product
+        As = F.softmax(As, dim=-1)  # Normalize with Softmax along rows
+        
+        # Thresholding to remove weak similarities (based on average threshold)
+        avg_similarity = As.mean(dim=-1, keepdim=True)
+        As[As < avg_similarity] = 0  # Set values below threshold to 0
+        
+        return As
+
+    def create_graph(self, X):
+        # Creates a graph from the input feature map X, where each node represents a pixel in the image.
+        #X: Tensor of shape (H, W, C), where C is the feature dimension for each pixel.
+
+        Ad = self.compute_coordinate_similarity(X)
+        As = self.compute_feature_similarity(X)
+
+        A = Ad * self.k + As * (1 - self.k)
+        
+        return A
+    
+class GCNNetwork(nn.Module):
+    def __init__(self, in_channels, out_channels, reduction=1, norm_layer=nn.BatchNorm2d):
+
+        super(GCNNetwork, self).__init__()
+        self.preprocess = nn.Conv2d(in_channels, out_channels//reduction, kernel_size=1, bias=True) # conv1x1 to fuse features
+        # GCN layers
+        self.conv1 = GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True) # aggr='mean','add','max','min','sum','mul'
+        self.conv2 = GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True)
+        self.norm = norm_layer(out_channels) 
+        # Graph constructor
+        self.graph = GraphConstructor(k=0.5, r=1.0)
+
+    def forward(self, x):
+        """
+        Forward pass: x is a batch of spatial features [B, C_in, H, W].
+        We build one graph per sample on the H×W grid, run two GCNConv layers, pool, and normalize.
+        """
+        B, C_in, H, W = x.shape
+        # 1) initial conv projection
+        x_reduced = self.preprocess(x)                     # [B, C_r, H, W]
+
+        # 2) build batched edge_index for all B graphs
+        edge_indices = []
+        for b in range(B):
+            # per-sample node features: H×W×C_r
+            feat = x_reduced[b].permute(1, 2, 0).contiguous()  # [H, W, C_r]
+            A = self.graph.create_graph(feat)
+            ei, _ = dense_to_sparse(A)
+            ei = ei + b * (H * W)
+            edge_indices.append(ei)
+        edge_index = torch.cat(edge_indices, dim=1)
+
+        # 3) flatten node features to (B*H*W, C_r)
+        x_flat = x_reduced.reshape(B, -1, H * W).permute(0, 2, 1).reshape(-1, x_reduced.size(1))
+        # batch assignment per node for pooling
+        batch = torch.arange(B, device=x.device).unsqueeze(1).repeat(1, H*W).reshape(-1)
+
+        # 4) apply GCNConv layers
+        xg = self.conv1(x_flat, edge_index)
+        xg = F.relu(xg)
+        xg = self.conv2(xg, edge_index)
+        xg = F.relu(xg)
+
+        # 5) global pooling
+        xg = global_max_pool(xg, batch)                    # [B, C_out]
+
+        # 6) reshape to spatial (B, C_out, 1, 1) and normalize
+        xg = xg.view(B, -1, 1, 1)
+        xg = self.norm(xg)
+        return xg
+
+# self.channel_embed = nn.Sequential(
+#                 # Feature fusion via 1x1 conv
+#                 nn.Conv2d(in_channels, out_channels//reduction, kernel_size=1, bias=True),
+                
+#                 nn.Conv2d(out_channels//reduction, out_channels//reduction, kernel_size=3, stride=1, padding=1, bias=True, groups=out_channels//reduction),
+#                 nn.ReLU(inplace=True),
+#                 nn.Conv2d(out_channels//reduction, out_channels, kernel_size=1, bias=True),
+#                 norm_layer(out_channels) 
+#                 )
+# B, N, _C = x.shape
+# x = x.permute(0, 2, 1).reshape(B, _C, H, W).contiguous()
+# residual = self.residual(x)
+# x = self.channel_embed(x)
+# out = self.norm(residual + x)
+# return out
+
+# # Example usage:
+# # Create a random image tensor of shape (H, W, C), where C is the number of channels.
+# H, W, C = 32, 32, 64  # Example dimensions
+# X = torch.randn(H, W, C)
+
+# # Initialize the graph constructor with k=0.5 and r=1.0
+# graph_constructor = GraphConstructor(k=0.5, r=1.0)
+
+# # Create graph from the image features
+# graph = graph_constructor.create_graph(X)
+
+# print(graph.shape)  # The adjacency matrix of the graph (H*W x H*W)
