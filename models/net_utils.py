@@ -6,6 +6,7 @@ from timm.models.layers import trunc_normal_
 import math
 from torch_geometric.nn import GCNConv, SAGEConv, global_mean_pool, global_max_pool, global_add_pool
 from torch_geometric.utils import dense_to_sparse
+from torch_geometric.nn import radius_graph
 # Feature Rectify Module
 class ChannelWeights(nn.Module):
     def __init__(self, dim, reduction=1):
@@ -556,15 +557,16 @@ class GraphConstructor(nn.Module):
         return As
 
     def create_graph(self, X):
-        # Creates a graph from the input feature map X, where each node represents a pixel in the image.
-        #X: Tensor of shape (H, W, C), where C is the feature dimension for each pixel.
-
-        Ad = self.compute_coordinate_similarity(X)
-        As = self.compute_feature_similarity(X)
-
-        A = Ad * self.k + As * (1 - self.k)
-        
-        return A
+        # Build a sparse graph using radius neighbors on the HxW grid
+        H, W, C = X.shape
+        # create grid coordinates for each pixel
+        row = torch.arange(H, device=X.device)
+        col = torch.arange(W, device=X.device)
+        grid_r, grid_c = torch.meshgrid(row, col, indexing='ij')
+        coords = torch.stack((grid_r, grid_c), dim=-1).view(-1, 2).float()
+        # generate edges where pixel-pairs are within radius self.r
+        edge_index = radius_graph(coords, r=self.r, loop=False)
+        return edge_index
     
 class GCNNetwork(nn.Module):
     def __init__(self, in_channels, out_channels, reduction=1, norm_layer=nn.BatchNorm2d):
