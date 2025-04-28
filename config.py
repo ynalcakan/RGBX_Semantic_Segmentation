@@ -57,7 +57,7 @@ C.decoder_embed_dim = 512
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
 C.fusion_module = 'FFM'  # Possibilities: FFM, IFFM
 C.optimizer = 'AdamW'
-C.criterion = 'MedianFreqCE_Focal'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss
+C.criterion = 'CE_SoftEdgeLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, CE_CannyEdgeLoss, CE_SoftEdgeLoss
 
 # SigmoidFocalLoss parameters
 C.FL_gamma = 4.0     
@@ -96,6 +96,10 @@ C.enable_cutout = False                # Enable/disable cutout augmentation
 C.fix_bias = True
 C.bn_eps = 1e-3
 C.bn_momentum = 0.1
+
+# Integration weights for combined losses
+C.loss_weight1 = 1.0    # Weight for primary segmentation loss (CrossEntropy or other)
+C.loss_weight2 = 0.5  # Weight for edge loss term
 
 """Eval Config"""
 C.eval_iter = 25

@@ -4,6 +4,7 @@ import scipy.ndimage as nd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import cv2
 
 from engine.logger import get_logger
 
@@ -569,3 +570,79 @@ class MedianFreqCELoss(nn.Module):
         # Apply cross-entropy with weights
         loss = F.cross_entropy(pred, target, weight=weights, ignore_index=self.ignore_index)
         return loss   
+    
+class CannyEdgeLoss(nn.Module):
+    def __init__(self, ignore_index=255, reduction='mean'):
+        super(CannyEdgeLoss, self).__init__()
+        self.ignore_index = ignore_index
+        self.reduction = reduction
+
+    def forward(self, pred, target):
+        # pred: [N, C, H, W] logits, target: [N, H, W]
+        # Convert logits to discrete mask
+        pred_mask = torch.argmax(pred, dim=1).cpu().numpy().astype(np.uint8)  # [N, H, W]
+        target_np = target.cpu().numpy().astype(np.uint8)  # [N, H, W]
+
+        batch_size = pred_mask.shape[0]
+        loss_list = []
+        for i in range(batch_size):
+            # Compute edges using Canny on single-channel uint8 images
+            pe = cv2.Canny(pred_mask[i], 10, 40) / 255.0    # now in {0,1}
+            te = cv2.Canny(target_np[i],   10, 40) / 255.0
+
+            pe_t = torch.from_numpy(pe).to(pred.device).unsqueeze(0).unsqueeze(0)
+            te_t = torch.from_numpy(te).to(pred.device).unsqueeze(0).unsqueeze(0)
+
+            loss_list.append(
+                F.binary_cross_entropy(pe_t, te_t, reduction=self.reduction)
+            )
+        # Average over batch
+        return torch.stack(loss_list).mean()
+    
+class SoftEdgeLoss(nn.Module):
+    def __init__(self, ignore_index=255, reduction='mean'):
+        super().__init__()
+        self.ignore_index = ignore_index
+        self.reduction = reduction
+
+        # Sobel kernels for horizontal & vertical gradients
+        kernel_x = torch.tensor([[-1, 0, 1],
+                                 [-2, 0, 2],
+                                 [-1, 0, 1]], dtype=torch.float32)
+        kernel_y = kernel_x.t()
+        # We’ll apply them on a single‐channel mask, so shape is (1,1,3,3)
+        self.register_buffer('kx', kernel_x.view(1,1,3,3))
+        self.register_buffer('ky', kernel_y.view(1,1,3,3))
+
+    def forward(self, pred, target):
+        """
+        pred: [N, C, H, W]  — raw logits
+        target: [N, H, W]   — integer mask
+        """
+        #    Convert logits to per‐pixel class probabilities
+        prob = F.softmax(pred, dim=1)                       # [N, C, H, W]
+        #    Collapse to a single‐channel “label magnitude” map
+        #    using either a soft-argmax or hard argmax—but keep it differentiable:
+        #    Here we take the max prob per pixel (still gives a gradient via prob).
+        max_prob, _ = prob.max(dim=1, keepdim=True)         # [N, 1, H, W]
+
+        # Move kernels to the same device as input
+        dev = max_prob.device
+        kx = self.kx.to(dev)
+        ky = self.ky.to(dev)
+        gx = F.conv2d(max_prob, kx, padding=1)         # [N,1,H,W]
+        gy = F.conv2d(max_prob, ky, padding=1)
+        pred_edge = torch.sqrt(gx*gx + gy*gy + 1e-6)        # smooth L2 magnitude
+
+        #   Same for the GT mask (treat as float image)
+        t = target.unsqueeze(1).float()                     # [N,1,H,W]
+        # ensure kernels on correct device
+        t = t.to(dev)
+        gx_t = F.conv2d(t, kx, padding=1)
+        gy_t = F.conv2d(t, ky, padding=1)
+        gt_edge = torch.sqrt(gx_t*gx_t + gy_t*gy_t + 1e-6)
+
+        #    Finally compare edge maps with a simple L1 or BCE loss
+        #    Here L1 works well for continuous maps:
+        loss = F.l1_loss(pred_edge, gt_edge, reduction=self.reduction)
+        return loss

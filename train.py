@@ -19,12 +19,12 @@ from config import config
 from dataloader.dataloader import get_train_loader
 from models.builder import EncoderDecoder as segmodel
 from dataloader.RGBXDataset import RGBXDataset
-from utils.init_func import init_weight, group_weight
+from utils.init_func import init_weight, group_weight # For weight decay of the model - optimizer
 from utils.lr_policy import WarmUpPolyLR, StepLR, OneCycleLR, ReduceLROnPlateauLR, CyclicLR, CosineAnnealingWarmupLR, MultiStageLR, LinearIncreaseLR
 from engine.engine import Engine
 from engine.logger import get_logger
-from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss
+from utils.pyt_utils import all_reduce_tensor # For distributed training
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, CannyEdgeLoss, SoftEdgeLoss
 
 from tensorboardX import SummaryWriter
 
@@ -97,6 +97,14 @@ with Engine(custom_parser=parser) as engine:
         # Combine CrossEntropy with Topology loss
         criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
         criterion2 = TopologyAwareLoss(ignore_index=config.background, reduction='mean')
+        criterion = (criterion1, criterion2)
+    elif criterion == 'CE_CannyEdgeLoss':
+        criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+        criterion2 = CannyEdgeLoss(ignore_index=config.background, reduction='mean')
+        criterion = (criterion1, criterion2)
+    elif criterion == 'CE_SoftEdgeLoss':
+        criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+        criterion2 = SoftEdgeLoss(ignore_index=config.background, reduction='mean')
         criterion = (criterion1, criterion2)
     else:
         raise NotImplementedError
@@ -207,7 +215,7 @@ with Engine(custom_parser=parser) as engine:
             if isinstance(criterion, tuple):
                 loss, loss_components = model(imgs, modal_xs, gts)
             else:
-                loss, loss_components = model(imgs, modal_xs, gts)
+                loss = model(imgs, modal_xs, gts)
 
             # reduce the whole loss over multi-gpu
             if engine.distributed:

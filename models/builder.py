@@ -190,9 +190,13 @@ class EncoderDecoder(nn.Module):
             out = self.encode_decode(rgb, modal_x)
         if label is not None:
             if isinstance(self.criterion, tuple):
+                # compute individual losses
                 loss1 = self.criterion[0](out, label.long())
                 loss2 = self.criterion[1](out, label.long())
-                loss = loss1 + 0.5 * loss2
+                # apply user-configurable weights
+                w1 = getattr(self.cfg, 'loss_weight1', 1.0)
+                w2 = getattr(self.cfg, 'loss_weight2', 0.5)
+                loss = w1 * loss1 + w2 * loss2
                 return loss, {"loss1": loss1, "loss2": loss2}
             else:
                 loss = self.criterion(out, label.long())
