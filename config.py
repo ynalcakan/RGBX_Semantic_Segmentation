@@ -55,7 +55,7 @@ C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
 C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
-C.fusion_module = 'FFM'  # Possibilities: FFM, IFFM, GFM
+C.fusion_module = 'GFM'  # Possibilities: FFM, IFFM, GFM
 C.optimizer = 'AdamW'
 C.criterion = 'CE_SoftEdgeLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, CE_CannyEdgeLoss, CE_SoftEdgeLoss
 
@@ -121,7 +121,7 @@ add_path(osp.join(C.root_dir))
 if C.criterion == 'SigmoidFocalLoss':
     log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
 else:
-    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + 'mgp' + '_' + C.criterion
 
 C.log_dir = osp.abspath(log_path)
 C.tb_dir = osp.abspath(osp.join(C.log_dir, "tb"))

@@ -586,10 +586,10 @@ class GCNNetwork(nn.Module):
         We build one graph per sample on the H×W grid, run two GCNConv layers, pool, and normalize.
         """
         B, C_in, H, W = x.shape
-        # 1) initial conv projection
+        # initial conv projection
         x_reduced = self.preprocess(x)                     # [B, C_r, H, W]
 
-        # 2) build batched edge_index for all B graphs
+        # build batched edge_index for all B graphs
         edge_indices = []
         for b in range(B):
             # per-sample node features: H×W×C_r
@@ -600,21 +600,21 @@ class GCNNetwork(nn.Module):
             edge_indices.append(ei)
         edge_index = torch.cat(edge_indices, dim=1)
 
-        # 3) flatten node features to (B*H*W, C_r)
+        # flatten node features to (B*H*W, C_r)
         x_flat = x_reduced.reshape(B, -1, H * W).permute(0, 2, 1).reshape(-1, x_reduced.size(1))
         # batch assignment per node for pooling
         batch = torch.arange(B, device=x.device).unsqueeze(1).repeat(1, H*W).reshape(-1)
 
-        # 4) apply GCNConv layers
+        # apply GCNConv layers
         xg = self.conv1(x_flat, edge_index)
         xg = F.relu(xg)
         xg = self.conv2(xg, edge_index)
         xg = F.relu(xg)
 
-        # 5) global pooling
-        xg = global_max_pool(xg, batch)                    # [B, C_out]
+        # global pooling
+        xg = global_mean_pool(xg, batch)                    # [B, C_out]
 
-        # 6) reshape to spatial (B, C_out, 1, 1) and normalize
+        # reshape to spatial (B, C_out, 1, 1) and normalize
         xg = xg.view(B, -1, 1, 1)
         xg = self.norm(xg)
         return xg
