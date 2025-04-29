@@ -20,7 +20,7 @@ from utils.lr_policy import WarmUpPolyLR, StepLR, OneCycleLR, ReduceLROnPlateauL
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, DiceLoss, FocalDiceLoss
 
 from tensorboardX import SummaryWriter
 
@@ -78,6 +78,10 @@ with Engine(custom_parser=parser) as engine:
         criterion = berHuLoss(ignore_index=config.background, reduction='mean')
     elif criterion == "FocalLoss2d":
         criterion = FocalLoss2d(ignore_index=config.background, reduction='mean')
+    elif criterion == 'FocalDiceLoss':
+        criterion = FocalDiceLoss(ignore_index=config.background)
+    elif criterion == 'DiceLoss':
+        criterion = DiceLoss(ignore_index=config.background)
     elif criterion == 'CE_Focal':
         # multiple loss function
         criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)

@@ -16,6 +16,40 @@ remoteip = os.popen('pwd').read()
 C.root_dir = os.path.abspath(os.path.join(os.getcwd(), './'))
 C.abs_dir = osp.realpath(".")
 
+# ===============================================================================
+# 26 00:05:48                                EVALUATION SUMMARY                               
+# 26 00:05:48 ================================================================================
+# 26 00:05:48 Dataset: MFNet
+# 26 00:05:48 Backbone: mit_b2, Decoder: MLPDecoder
+# 26 00:05:48 Rectify module: FRM, Fusion module: FFM
+# 26 00:05:48 Loss function: FocalDiceLoss, Optimizer: AdamW, Epochs: 50
+# 26 00:05:48 Number of classes: 9
+# 26 00:05:48 Number of eval images: 393
+# 26 00:05:48 --------------------------------------------------------------------------------
+# ================================================================================
+#                     SEMANTIC SEGMENTATION EVALUATION RESULTS                    
+# ================================================================================
+
+# CLASS                                       IoU (%)
+# -------------------------------------------------------
+# 0 - Unlabeled                                98.21%
+# 1 - Car                                      89.41%
+# 2 - Person                                   72.98%
+# 3 - Bike                                     64.93%
+# 4 - Curve                                    47.00%
+# 5 - Car Stop                                 31.55%
+# 6 - Guardrail                                 4.07%
+# 7 - Color Cone                               52.46%
+# 8 - Bump                                     52.72%
+
+# --------------------------------------------------------------------------------
+# Mean IoU:                     57.04%
+# Frequency Weighted IoU:       96.66%
+# Mean Pixel Accuracy:          66.20%
+# Pixel Accuracy:               98.16%
+# ================================================================================
+# 26 00:05:48 Evaluation Elapsed Time: 30.23s
+
 # Dataset config
 """Dataset Path"""
 C.dataset_name = 'MFNet'
@@ -63,6 +97,21 @@ C.criterion = 'MedianFreqCE_Focal'    # Possibilities: SigmoidFocalLoss, CrossEn
 C.FL_gamma = 4.0     
 C.FL_alpha = 0.25
 
+"""Loss function Config"""
+# WeightedCrossEntropy2d parametersex
+# C.class_weights = [0.6, 0.9, 1.0, 1.4, 1.2, 1.5, 1.7, 1.4, 1.2] 
+# C.class_weights = [0.8, 0.9, 1.2, 1.5, 1.2, 1.5, 1.0, 1.8, 1.5] # previous
+# C.class_weights = [0.2 , 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+# -> C.class_weights = [6.09292401e-04, 1.33798871e-01, 4.56693120e-01, 6.42304688e-01, 9.05816050e-01, 1.11604266e+00, 4.60961076e+00, 2.58301822e+00, 1.66006424e+00]
+
+
+# Focal_dice_loss parameters
+C.FDL_alpha = 0.5 # Focal loss weight
+C.FDL_beta = 0.5 # Dice loss weight
+C.FDL_eps = 1e-6 # Dice loss epsilon
+
+
+
 """LR Config"""
 C.lr_method = 'CosineAnnealingWarmupLR' # 'OneCycleLR', 'WarmUpPolyLR', 'StepLR', 'CosineAnnealingWarmupLR', 'ReduceLROnPlateauLR', 'CyclicLR', 'MultiStageLR', 'LinearIncreaseLR'
 C.lr = 1e-4  # Slightly higher than current 3e-5 for better exploration
@@ -80,7 +129,7 @@ C.weight_decay = 0.01  # Reduce slightly from 0.015 for cosine scheduler
 """Train Config"""
 C.momentum = 0.9
 C.batch_size = 12 # 8
-C.nepochs = 450
+C.nepochs = 50
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
