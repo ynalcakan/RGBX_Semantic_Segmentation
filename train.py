@@ -20,7 +20,7 @@ from utils.lr_policy import WarmUpPolyLR, StepLR, OneCycleLR, ReduceLROnPlateauL
 from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor
-from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, DiceLoss, FocalDiceLoss
+from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, DiceLoss, FocalDiceLoss, SoftEdgeLoss
 
 from tensorboardX import SummaryWriter
 
@@ -97,6 +97,12 @@ with Engine(custom_parser=parser) as engine:
         criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
         criterion2 = TopologyAwareLoss(ignore_index=config.background, reduction='mean')
         criterion = (criterion1, criterion2)
+    elif criterion == 'SoftEdgeLoss':
+        criterion = SoftEdgeLoss(ignore_index=config.background, reduction='mean')
+    elif criterion == 'CE_SoftEdgeLoss':
+        criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
+        criterion2 = SoftEdgeLoss(ignore_index=config.background, reduction='mean')
+        criterion = (criterion, criterion2)
     else:
         raise NotImplementedError
 
@@ -152,7 +158,7 @@ with Engine(custom_parser=parser) as engine:
         if torch.cuda.is_available():
             model.cuda()
             model = DistributedDataParallel(model, device_ids=[engine.local_rank], 
-                                            output_device=engine.local_rank, find_unused_parameters=False)
+                                            output_device=engine.local_rank, find_unused_parameters=True)
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
@@ -193,7 +199,7 @@ with Engine(custom_parser=parser) as engine:
             if isinstance(criterion, tuple):
                 loss, loss_components = model(imgs, modal_xs, gts)
             else:
-                loss, loss_components = model(imgs, modal_xs, gts)
+                loss = model(imgs, modal_xs, gts)
 
             # reduce the whole loss over multi-gpu
             if engine.distributed:

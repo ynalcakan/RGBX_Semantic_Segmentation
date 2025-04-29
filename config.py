@@ -16,39 +16,6 @@ remoteip = os.popen('pwd').read()
 C.root_dir = os.path.abspath(os.path.join(os.getcwd(), './'))
 C.abs_dir = osp.realpath(".")
 
-# ===============================================================================
-# 26 00:05:48                                EVALUATION SUMMARY                               
-# 26 00:05:48 ================================================================================
-# 26 00:05:48 Dataset: MFNet
-# 26 00:05:48 Backbone: mit_b2, Decoder: MLPDecoder
-# 26 00:05:48 Rectify module: FRM, Fusion module: FFM
-# 26 00:05:48 Loss function: FocalDiceLoss, Optimizer: AdamW, Epochs: 50
-# 26 00:05:48 Number of classes: 9
-# 26 00:05:48 Number of eval images: 393
-# 26 00:05:48 --------------------------------------------------------------------------------
-# ================================================================================
-#                     SEMANTIC SEGMENTATION EVALUATION RESULTS                    
-# ================================================================================
-
-# CLASS                                       IoU (%)
-# -------------------------------------------------------
-# 0 - Unlabeled                                98.21%
-# 1 - Car                                      89.41%
-# 2 - Person                                   72.98%
-# 3 - Bike                                     64.93%
-# 4 - Curve                                    47.00%
-# 5 - Car Stop                                 31.55%
-# 6 - Guardrail                                 4.07%
-# 7 - Color Cone                               52.46%
-# 8 - Bump                                     52.72%
-
-# --------------------------------------------------------------------------------
-# Mean IoU:                     57.04%
-# Frequency Weighted IoU:       96.66%
-# Mean Pixel Accuracy:          66.20%
-# Pixel Accuracy:               98.16%
-# ================================================================================
-# 26 00:05:48 Evaluation Elapsed Time: 30.23s
 
 # Dataset config
 """Dataset Path"""
@@ -86,12 +53,12 @@ C.norm_std = np.array([0.229, 0.224, 0.225])
 """ Settings for network, this would be different for each kind of model"""
 C.backbone = 'mit_b2' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
 C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
-C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
+C.decoder = 'UPernet'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
 C.fusion_module = 'FFM'  # Possibilities: FFM, IFFM
 C.optimizer = 'AdamW'
-C.criterion = 'MedianFreqCE_Focal'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss
+C.criterion = 'CE_SoftEdgeLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, SoftEdgeLoss, CE_SoftEdgeLoss
 
 # SigmoidFocalLoss parameters
 C.FL_gamma = 4.0     
@@ -110,8 +77,6 @@ C.FDL_alpha = 0.5 # Focal loss weight
 C.FDL_beta = 0.5 # Dice loss weight
 C.FDL_eps = 1e-6 # Dice loss epsilon
 
-
-
 """LR Config"""
 C.lr_method = 'CosineAnnealingWarmupLR' # 'OneCycleLR', 'WarmUpPolyLR', 'StepLR', 'CosineAnnealingWarmupLR', 'ReduceLROnPlateauLR', 'CyclicLR', 'MultiStageLR', 'LinearIncreaseLR'
 C.lr = 1e-4  # Slightly higher than current 3e-5 for better exploration
@@ -129,7 +94,7 @@ C.weight_decay = 0.01  # Reduce slightly from 0.015 for cosine scheduler
 """Train Config"""
 C.momentum = 0.9
 C.batch_size = 12 # 8
-C.nepochs = 50
+C.nepochs = 500
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -153,7 +118,7 @@ C.eval_flip = False # True #
 C.eval_crop_size = [480, 640] # [height weight]
 
 """Store Config"""
-C.checkpoint_start_epoch = 350
+C.checkpoint_start_epoch = 100
 C.checkpoint_step = 50
 
 """Path Config"""
