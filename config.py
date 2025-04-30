@@ -83,7 +83,7 @@ C.weight_decay = 0.01
 C.batch_size = 12
 C.nepochs = 50
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
-C.num_workers = 0
+C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
 
 # Data augmentation options

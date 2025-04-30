@@ -364,10 +364,10 @@ class RGBXTransformer(nn.Module):
         elif self.fusion_module == 'GFM':
             logger.info("Using GFM fusion modules")
             self.FMs = nn.ModuleList([
-                        GFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),
-                        GFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),
-                        GFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),
-                        GFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])
+                        FFM(dim=embed_dims[0], reduction=1, num_heads=num_heads[0], norm_layer=norm_fuse),  #S1
+                        FFM(dim=embed_dims[1], reduction=1, num_heads=num_heads[1], norm_layer=norm_fuse),  #S2
+                        GFM(dim=embed_dims[2], reduction=1, num_heads=num_heads[2], norm_layer=norm_fuse),  #S3
+                        GFM(dim=embed_dims[3], reduction=1, num_heads=num_heads[3], norm_layer=norm_fuse)])  #S4
         else:
             raise ValueError(f"Invalid fusion_module: {self.fusion_module}. Must be 'FFM' or 'IFFM' or 'GFM'")
 

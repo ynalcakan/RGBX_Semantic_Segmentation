@@ -618,32 +618,3 @@ class GCNNetwork(nn.Module):
         xg = xg.view(B, -1, 1, 1)
         xg = self.norm(xg)
         return xg
-
-# self.channel_embed = nn.Sequential(
-#                 # Feature fusion via 1x1 conv
-#                 nn.Conv2d(in_channels, out_channels//reduction, kernel_size=1, bias=True),
-                
-#                 nn.Conv2d(out_channels//reduction, out_channels//reduction, kernel_size=3, stride=1, padding=1, bias=True, groups=out_channels//reduction),
-#                 nn.ReLU(inplace=True),
-#                 nn.Conv2d(out_channels//reduction, out_channels, kernel_size=1, bias=True),
-#                 norm_layer(out_channels) 
-#                 )
-# B, N, _C = x.shape
-# x = x.permute(0, 2, 1).reshape(B, _C, H, W).contiguous()
-# residual = self.residual(x)
-# x = self.channel_embed(x)
-# out = self.norm(residual + x)
-# return out
-
-# # Example usage:
-# # Create a random image tensor of shape (H, W, C), where C is the number of channels.
-# H, W, C = 32, 32, 64  # Example dimensions
-# X = torch.randn(H, W, C)
-
-# # Initialize the graph constructor with k=0.5 and r=1.0
-# graph_constructor = GraphConstructor(k=0.5, r=1.0)
-
-# # Create graph from the image features
-# graph = graph_constructor.create_graph(X)
-
-# print(graph.shape)  # The adjacency matrix of the graph (H*W x H*W)
