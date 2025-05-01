@@ -4,6 +4,7 @@ import torch
 
 from torch.nn.modules import module
 import torch.nn.functional as F
+from config import config as C
 
 class MLP(nn.Module):
     """
@@ -25,7 +26,7 @@ class DecoderHead(nn.Module):
                  num_classes=40,
                  dropout_ratio=0.1,
                  norm_layer=nn.BatchNorm2d,
-                 embed_dim=768,
+                 embed_dim=C.decoder_embed_dim,
                  align_corners=False):
         
         super(DecoderHead, self).__init__()

@@ -29,7 +29,7 @@ class UPerHead(nn.Module):
         self.bottleneck = nn.Sequential(
                 nn.Conv2d(self.in_channels[-1] + len(pool_scales) * self.channels, self.channels, 3, padding=1),
                 norm_layer(self.channels),
-                nn.ReLU(inplace=True)
+                nn.ReLU(inplace=False)
         )
         # FPN Module
         self.lateral_convs = nn.ModuleList()
@@ -77,7 +77,7 @@ class UPerHead(nn.Module):
         used_backbone_levels = len(laterals)
         for i in range(used_backbone_levels - 1, 0, -1):
             prev_shape = laterals[i - 1].shape[2:]
-            laterals[i - 1] += F.interpolate(
+            laterals[i - 1] = laterals[i - 1] + F.interpolate(
                 laterals[i],
                 size=prev_shape,
                 mode='bilinear',
@@ -129,7 +129,7 @@ class PPM(nn.ModuleList):
                     nn.AdaptiveAvgPool2d(pool_scale),
                     nn.Conv2d(self.in_channel, self.channels, 1),
                     norm_layer(self.channels), 
-                    nn.ReLU(inplace=True)
+                    nn.ReLU(inplace=False)
                 ))
 
     def forward(self, x):

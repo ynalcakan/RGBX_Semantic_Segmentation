@@ -53,11 +53,12 @@ C.norm_std = np.array([0.229, 0.224, 0.225])
 C.backbone = 'mit_b2' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
 C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
 C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
-C.decoder_embed_dim = 512
+C.decoder_embed_dim = 512 # 512 for B2, 768 for B4
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
 C.fusion_module = 'GFM'  # Possibilities: FFM, IFFM, GFM
 C.optimizer = 'AdamW'
 C.criterion = 'CE_SoftEdgeLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, CE_CannyEdgeLoss, CE_SoftEdgeLoss
+C.GCN_layers = 2
 
 # SigmoidFocalLoss parameters
 C.FL_gamma = 4.0     
@@ -80,7 +81,7 @@ C.weight_decay = 0.01  # Reduce slightly from 0.015 for cosine scheduler
 """Train Config"""
 C.momentum = 0.9
 C.weight_decay = 0.01
-C.batch_size = 12
+C.batch_size = 4
 C.nepochs = 50
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
