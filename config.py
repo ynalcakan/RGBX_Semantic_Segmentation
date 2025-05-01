@@ -31,6 +31,7 @@ C.gt_transform = False
 C.x_root_folder = osp.join(C.dataset_path, 'Thermal')
 C.x_format = '.png'
 C.x_is_single_channel = True # True for raw depth, thermal and aolp/dolp(not aolp/dolp tri) input
+C.x_is_thermal = True  # Flag indicating X modality is thermal data
 C.train_source = osp.join(C.dataset_path, "train_val.txt")
 C.eval_source = osp.join(C.dataset_path, "test.txt")
 C.is_test = False
@@ -50,10 +51,14 @@ C.image_width = 640
 C.norm_mean = np.array([0.485, 0.456, 0.406])
 C.norm_std = np.array([0.229, 0.224, 0.225])
 
+# Thermal normalization (different from RGB)
+C.thermal_norm_mean = [0.5]
+C.thermal_norm_std = [0.25]
+
 """ Settings for network, this would be different for each kind of model"""
 C.backbone = 'mit_b2' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
 C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
-C.decoder = 'UPernet'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
+C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
 C.fusion_module = 'FFM'  # Possibilities: FFM, IFFM
@@ -94,7 +99,7 @@ C.weight_decay = 0.01  # Reduce slightly from 0.015 for cosine scheduler
 """Train Config"""
 C.momentum = 0.9
 C.batch_size = 12 # 8
-C.nepochs = 500
+C.nepochs = 350
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -105,6 +110,10 @@ C.enable_random_crop = False           # Enable/disable random crop during train
 C.enable_color_jitter = False          # Enable/disable color jittering
 C.enable_gaussian_blur = False         # Enable/disable Gaussian blur
 C.enable_cutout = False                # Enable/disable cutout augmentation
+
+# Thermal-specific augmentation settings
+C.enable_thermal_augmentation = True  # Enable/disable thermal-specific augmentations
+C.thermal_augment_prob = 0.7          # Probability of applying thermal augmentations
 
 C.fix_bias = True
 C.bn_eps = 1e-3
@@ -130,7 +139,7 @@ add_path(osp.join(C.root_dir))
 if C.criterion == 'SigmoidFocalLoss':
     log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
 else:
-    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion + '_' + str(C.nepochs) + 'Epochs' + '_Thermal_Augs_' + str(C.enable_thermal_augmentation)
 
 C.log_dir = osp.abspath(log_path)
 C.tb_dir = osp.abspath(osp.join(C.log_dir, "tb"))
