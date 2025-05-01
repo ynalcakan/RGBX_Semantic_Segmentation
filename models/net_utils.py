@@ -7,6 +7,7 @@ import math
 from torch_geometric.nn import GCNConv, SAGEConv, global_mean_pool, global_max_pool, global_add_pool
 from torch_geometric.utils import dense_to_sparse
 from torch_geometric.nn import radius_graph
+from config import config as C
 # Feature Rectify Module
 class ChannelWeights(nn.Module):
     def __init__(self, dim, reduction=1):
@@ -574,8 +575,13 @@ class GCNNetwork(nn.Module):
         super(GCNNetwork, self).__init__()
         self.preprocess = nn.Conv2d(in_channels, out_channels//reduction, kernel_size=1, bias=True) # conv1x1 to fuse features
         # GCN layers
-        self.conv1 = GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True) # aggr='mean','add','max','min','sum','mul'
-        self.conv2 = GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True)
+         # dynamically create exactly C.GCN_layers-1 hidden layers + 1 output layer
+        self.convs = nn.ModuleList()
+        for _ in range(C.GCN_layers - 1):
+            self.convs.append(GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True))
+        # final maps to full out_channels
+        self.convs.append(GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True))
+        
         self.norm = norm_layer(out_channels) 
         # Graph constructor
         self.graph = GraphConstructor(k=0.5, r=1.0)
@@ -601,16 +607,14 @@ class GCNNetwork(nn.Module):
         edge_index = torch.cat(edge_indices, dim=1)
 
         # flatten node features to (B*H*W, C_r)
-        x_flat = x_reduced.reshape(B, -1, H * W).permute(0, 2, 1).reshape(-1, x_reduced.size(1))
+        xg = x_reduced.reshape(B, -1, H * W).permute(0, 2, 1).reshape(-1, x_reduced.size(1))
+        
         # batch assignment per node for pooling
         batch = torch.arange(B, device=x.device).unsqueeze(1).repeat(1, H*W).reshape(-1)
 
-        # apply GCNConv layers
-        xg = self.conv1(x_flat, edge_index)
-        xg = F.relu(xg)
-        xg = self.conv2(xg, edge_index)
-        xg = F.relu(xg)
-
+        for conv in self.convs:
+            xg = conv(xg, edge_index)
+            xg = F.relu(xg)
         # global pooling
         xg = global_mean_pool(xg, batch)                    # [B, C_out]
 
