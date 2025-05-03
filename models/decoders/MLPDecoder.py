@@ -1,6 +1,7 @@
 import numpy as np
 import torch.nn as nn
 import torch
+import math
 
 from torch.nn.modules import module
 import torch.nn.functional as F
@@ -12,10 +13,24 @@ class MLP(nn.Module):
     """
     def __init__(self, input_dim=2048, embed_dim=768):
         super().__init__()
+        self.input_dim = input_dim
+        self.embed_dim = embed_dim
         self.proj = nn.Linear(input_dim, embed_dim)
 
     def forward(self, x):
         x = x.flatten(2).transpose(1, 2)
+        
+        # Check if input dimensions match weight dimensions
+        if x.size(2) != self.proj.weight.size(1):
+            # Recreate projection layer with correct dimensions
+            new_proj = nn.Linear(x.size(2), self.embed_dim, device=x.device)
+            # Initialize with same strategy as in __init__
+            nn.init.kaiming_uniform_(new_proj.weight, a=np.sqrt(5))
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(new_proj.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            nn.init.uniform_(new_proj.bias, -bound, bound)
+            self.proj = new_proj
+            
         x = self.proj(x)
         return x
 
@@ -26,7 +41,7 @@ class DecoderHead(nn.Module):
                  num_classes=40,
                  dropout_ratio=0.1,
                  norm_layer=nn.BatchNorm2d,
-                 embed_dim=C.decoder_embed_dim,
+                 embed_dim=768,
                  align_corners=False):
         
         super(DecoderHead, self).__init__()

@@ -66,24 +66,27 @@ class EncoderDecoder(nn.Module):
         elif cfg.backbone == 'mit_b5':
             logger.info('Using backbone: Segformer-B5')
             from .encoders.dual_segformer import mit_b5 as backbone
-            self.channels = [96, 192, 384, 768]
+            self.channels = [64, 128, 320, 512]
             self.backbone = backbone(norm_fuse=norm_layer)
         elif cfg.backbone == 'mit_b4':
             logger.info('Using backbone: Segformer-B4')
             from .encoders.dual_segformer import mit_b4 as backbone
-            self.channels = [96, 192, 384, 768]
+            self.channels = [64, 128, 320, 512]
             self.backbone = backbone(norm_fuse=norm_layer)
         elif cfg.backbone == 'mit_b3':
             logger.info('Using backbone: Segformer-B3')
             from .encoders.dual_segformer import mit_b3 as backbone
+            self.channels = [64, 128, 320, 512]
             self.backbone = backbone(norm_fuse=norm_layer)
         elif cfg.backbone == 'mit_b2':
             logger.info('Using backbone: Segformer-B2')
             from .encoders.dual_segformer import mit_b2 as backbone
+            self.channels = [64, 128, 320, 512]
             self.backbone = backbone(norm_fuse=norm_layer)
         elif cfg.backbone == 'mit_b1':
             logger.info('Using backbone: Segformer-B1')
-            from .encoders.dual_segformer import mit_b0 as backbone
+            from .encoders.dual_segformer import mit_b1 as backbone
+            self.channels = [32, 64, 160, 256]
             self.backbone = backbone(norm_fuse=norm_layer)
         elif cfg.backbone == 'mit_b0':
             logger.info('Using backbone: Segformer-B0')
@@ -101,6 +104,7 @@ class EncoderDecoder(nn.Module):
             logger.info('Using MLP Decoder')
             from .decoders.MLPDecoder import DecoderHead
             self.decode_head = DecoderHead(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=cfg.decoder_embed_dim)
+            logger.info(f"Initialized decode_head with in_channels={self.channels}, embed_dim={cfg.decoder_embed_dim}")
         elif cfg.decoder == 'MLPDecoderpp':
             logger.info('Using MLP Decoderpp')
             from .decoders.MLPDecoderpp import DecoderHead
