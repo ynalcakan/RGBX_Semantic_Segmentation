@@ -50,10 +50,10 @@ C.norm_mean = np.array([0.485, 0.456, 0.406])
 C.norm_std = np.array([0.229, 0.224, 0.225])
 
 """ Settings for network, this would be different for each kind of model"""
-C.backbone = 'mit_b2' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
-C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
+C.backbone = 'mit_b4' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
+C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b4.pth'
 C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
-C.decoder_embed_dim = 512 # 512 for B2, 768 for B4
+C.decoder_embed_dim = 768 # Output dimension that decoder will project features to. Input dimensions are determined by backbone.
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
 C.fusion_module = 'GFM'  # Possibilities: FFM, IFFM, GFM
 C.optimizer = 'AdamW'
@@ -81,8 +81,8 @@ C.weight_decay = 0.01  # Reduce slightly from 0.015 for cosine scheduler
 """Train Config"""
 C.momentum = 0.9
 C.weight_decay = 0.01
-C.batch_size = 4
-C.nepochs = 50
+C.batch_size = 8
+C.nepochs = 450
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -91,7 +91,7 @@ C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
 C.enable_random_mirror = True         # Enable/disable horizontal flipping during training
 C.enable_random_crop = False           # Enable/disable random crop during training
 C.enable_color_jitter = False          # Enable/disable color jittering
-C.enable_gaussian_blur = False         # Enable/disable Gaussian blur
+C.enable_gaussian_blur = True         # Enable/disable Gaussian blur
 C.enable_cutout = False                # Enable/disable cutout augmentation
 
 C.fix_bias = True
@@ -121,8 +121,10 @@ add_path(osp.join(C.root_dir))
 
 if C.criterion == 'SigmoidFocalLoss':
     log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
+elif C.fusion_module == 'GFM':
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion + '_' + 'meangp'
 else:
-    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + 'mgp' + '_' + C.criterion
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion
 
 C.log_dir = osp.abspath(log_path)
 C.tb_dir = osp.abspath(osp.join(C.log_dir, "tb"))
