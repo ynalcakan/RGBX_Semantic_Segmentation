@@ -397,7 +397,12 @@ class GraphChannelEmbed(nn.Module):
         self.out_channels = out_channels
         self.residual = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
         self.graph = GraphConstructor(k=0.5, r=1.0)
-        self.channel_embed = GCNNetwork(in_channels=in_channels, out_channels=out_channels, reduction=reduction, norm_layer=norm_layer)
+        if C.gfm_net_type == 'GCNNetwork':
+            self.channel_embed = GCNNetwork(in_channels=in_channels, out_channels=out_channels, reduction=reduction, norm_layer=norm_layer)
+        elif C.gfm_net_type == 'GCNNetworkV2':
+            self.channel_embed = GCNNetworkV2(in_channels=in_channels, out_channels=out_channels, reduction=reduction, norm_layer=norm_layer)
+        elif C.gfm_net_type == 'GCNNetworkV3':
+            self.channel_embed = GCNNetworkV3(in_channels=in_channels, out_channels=out_channels, reduction=reduction, norm_layer=norm_layer)
         self.norm = norm_layer(out_channels)
         
     def forward(self, x, H, W):
@@ -621,4 +626,137 @@ class GCNNetwork(nn.Module):
         # reshape to spatial (B, C_out, 1, 1) and normalize
         xg = xg.view(B, -1, 1, 1)
         xg = self.norm(xg)
+        return xg
+    
+class GCNNetworkV2(nn.Module):
+    def __init__(self, in_channels, out_channels, reduction=1, norm_layer=nn.BatchNorm2d):
+
+        super(GCNNetworkV2, self).__init__()
+        self.preprocess = nn.Conv2d(in_channels, out_channels//reduction, kernel_size=1, bias=True) # conv1x1 to fuse features
+        # GCN layers
+         # dynamically create exactly C.GCN_layers-1 hidden layers + 1 output layer
+        self.convs = nn.ModuleList()
+        for _ in range(C.GCN_layers - 1):
+            self.convs.append(GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True))
+        # final maps to full out_channels
+        self.convs.append(GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True))
+        
+        self.norm = norm_layer(out_channels) 
+        # Graph constructor
+        self.graph = GraphConstructor(k=0.5, r=1.0)
+        # Convolution to fuse mean and max pooled features
+        self.fuse = nn.Conv2d(out_channels * 2, out_channels, kernel_size=1, bias=True)
+
+    def forward(self, x):
+        """
+        Forward pass: x is a batch of spatial features [B, C_in, H, W].
+        We build one graph per sample on the H×W grid, run two GCNConv layers, pool, and normalize.
+        """
+        B, C_in, H, W = x.shape
+        # initial conv projection
+        x_reduced = self.preprocess(x)                     # [B, C_r, H, W]
+
+        # build batched edge_index for all B graphs
+        edge_indices = []
+        for b in range(B):
+            # per-sample node features: H×W×C_r
+            feat = x_reduced[b].permute(1, 2, 0).contiguous()  # [H, W, C_r]
+            A = self.graph.create_graph(feat)
+            ei, _ = dense_to_sparse(A)
+            ei = ei + b * (H * W)
+            edge_indices.append(ei)
+        edge_index = torch.cat(edge_indices, dim=1)
+
+        # flatten node features to (B*H*W, C_r)
+        xg = x_reduced.reshape(B, -1, H * W).permute(0, 2, 1).reshape(-1, x_reduced.size(1))
+        
+        # batch assignment per node for pooling
+        batch = torch.arange(B, device=x.device).unsqueeze(1).repeat(1, H*W).reshape(-1)
+
+        for conv in self.convs:
+            xg = conv(xg, edge_index)
+            xg = F.relu(xg)
+        # global pooling
+        x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
+        x_max = global_max_pool(xg, batch)                    # [B, C_out]
+
+        # reshape to spatial (B, C_out, 1, 1) and normalize
+        x_mean = x_mean.view(B, -1, 1, 1)
+        x_max = x_max.view(B, -1, 1, 1)
+
+        # Fuse mean and max pooled features by 1x1 convolution
+        x_cat = torch.cat((x_mean, x_max), dim=1)  # (B, 2*C_out, 1,1)
+        xg = self.fuse(x_cat)  # (B, C_out, 1,1)
+        xg = self.norm(xg)
+        
+        return xg
+
+class GCNNetworkV3(nn.Module):
+    def __init__(self, in_channels, out_channels, reduction=1, norm_layer=nn.BatchNorm2d):
+
+        super(GCNNetworkV3, self).__init__()
+        self.preprocess = nn.Conv2d(in_channels, out_channels//reduction, kernel_size=1, bias=True) # conv1x1 to fuse features
+        # GCN layers
+         # dynamically create exactly C.GCN_layers-1 hidden layers + 1 output layer
+        self.convs = nn.ModuleList()
+        for _ in range(C.GCN_layers - 1):
+            self.convs.append(GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True))
+        # final maps to full out_channels
+        self.convs.append(GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True))
+        
+        self.norm = norm_layer(out_channels) 
+        # Graph constructor
+        self.graph = GraphConstructor(k=0.5, r=1.0)
+        # Gating mechanism for dynamic fusion of mean and max pooled features
+        self.gate = nn.Sequential(
+            nn.Conv2d(out_channels * 2, out_channels // reduction, kernel_size=1, bias=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels // reduction, 2, kernel_size=1, bias=True),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        """
+        Forward pass: x is a batch of spatial features [B, C_in, H, W].
+        We build one graph per sample on the H×W grid, run two GCNConv layers, pool, and normalize.
+        """
+        B, C_in, H, W = x.shape
+        # initial conv projection
+        x_reduced = self.preprocess(x)                     # [B, C_r, H, W]
+
+        # build batched edge_index for all B graphs
+        edge_indices = []
+        for b in range(B):
+            # per-sample node features: H×W×C_r
+            feat = x_reduced[b].permute(1, 2, 0).contiguous()  # [H, W, C_r]
+            A = self.graph.create_graph(feat)
+            ei, _ = dense_to_sparse(A)
+            ei = ei + b * (H * W)
+            edge_indices.append(ei)
+        edge_index = torch.cat(edge_indices, dim=1)
+
+        # flatten node features to (B*H*W, C_r)
+        xg = x_reduced.reshape(B, -1, H * W).permute(0, 2, 1).reshape(-1, x_reduced.size(1))
+        
+        # batch assignment per node for pooling
+        batch = torch.arange(B, device=x.device).unsqueeze(1).repeat(1, H*W).reshape(-1)
+
+        for conv in self.convs:
+            xg = conv(xg, edge_index)
+            xg = F.relu(xg)
+        # global pooling
+        x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
+        x_max = global_max_pool(xg, batch)                    # [B, C_out]
+
+        # reshape to spatial (B, C_out, 1, 1) and normalize
+        x_mean = x_mean.view(B, -1, 1, 1)
+        x_max = x_max.view(B, -1, 1, 1)
+
+        # Dynamic gating fusion of mean and max pooled features
+        x_cat = torch.cat((x_mean, x_max), dim=1)  # (B, 2*C_out, 1,1)
+        g = self.gate(x_cat)  # (B, 2, 1,1)
+        g_mean, g_max = g[:, :1, ...], g[:, 1:, ...]
+        xg = g_mean * x_mean + g_max * x_max  # (B, C_out, 1,1)
+        xg = self.norm(xg)
+        
         return xg

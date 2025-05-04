@@ -52,10 +52,11 @@ C.norm_std = np.array([0.229, 0.224, 0.225])
 """ Settings for network, this would be different for each kind of model"""
 C.backbone = 'mit_b2' # Remember change the path below.   # Possibilities: mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5, swin_s, swin_b
 C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
-C.decoder = 'UPernet'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
+C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512 # Output dimension that decoder will project features to. Input dimensions are determined by backbone. # 512 b2, 768 b4,
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
 C.fusion_module = 'GFM'  # Possibilities: FFM, IFFM, GFM
+C.gfm_net_type = 'GCNNetworkV2'  # Possibilities: GCNNetwork, GCNNetworkV2, GCNNetworkV3
 C.optimizer = 'AdamW'
 C.criterion = 'CE_SoftEdgeLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, CE_CannyEdgeLoss, CE_SoftEdgeLoss
 C.GCN_layers = 2
@@ -66,10 +67,10 @@ C.FL_alpha = 0.25
 
 """LR Config"""
 C.lr_method = 'CosineAnnealingWarmupLR' # 'OneCycleLR', 'WarmUpPolyLR', 'StepLR', 'CosineAnnealingWarmupLR', 'ReduceLROnPlateauLR', 'CyclicLR', 'MultiStageLR', 'LinearIncreaseLR'
-C.lr = 1e-4  # Slightly higher than current 3e-5 for better exploration
+C.lr = 1e-4  # Slightly higher than current 3e-5 for better exploration # try 3e-1 for more epochs
 C.lr_power = 0.8 # 0.9  
 C.warm_up_epoch = 25  # ~5-6% of total epochs (450) is optimal for warmup
-C.min_lr = 5e-6  # 5% of max learning rate prevents too small gradients
+C.min_lr = 5e-6  # 5% of max learning rate prevents too small gradients 5e-6 pri lr 1e-4
 C.factor = 0.1
 C.patience = 10
 C.threshold = 1e-4
@@ -82,7 +83,7 @@ C.weight_decay = 0.01  # Reduce slightly from 0.015 for cosine scheduler
 C.momentum = 0.9
 C.weight_decay = 0.01
 C.batch_size = 12
-C.nepochs = 450
+C.nepochs = 50
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
@@ -122,7 +123,7 @@ add_path(osp.join(C.root_dir))
 if C.criterion == 'SigmoidFocalLoss':
     log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion + '_gamma' + str(C.FL_gamma) + '_alpha' + str(C.FL_alpha)
 elif C.fusion_module == 'GFM':
-    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion + '_' + 'meangp'
+    log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion + '_' + C.gfm_net_type + '_' + 'meangp'
 else:
     log_path = 'logs/' + C.dataset_name + '/' + 'log_' + C.backbone + '_' + C.decoder + '_' + C.rectify_module + '_' + C.fusion_module + '_' + C.criterion
 
