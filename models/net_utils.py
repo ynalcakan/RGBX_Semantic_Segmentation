@@ -404,6 +404,8 @@ class GraphChannelEmbed(nn.Module):
             self.channel_embed = GCNNetworkV2(in_channels=in_channels, out_channels=out_channels, reduction=reduction, norm_layer=norm_layer)
         elif C.gfm_net_type == 'GCNNetworkV3':
             self.channel_embed = GCNNetworkV3(in_channels=in_channels, out_channels=out_channels, reduction=reduction, norm_layer=norm_layer)
+        elif C.gfm_net_type == 'GCNNetworkV4':
+            self.channel_embed = GCNNetworkV4(in_channels=in_channels, out_channels=out_channels, reduction=reduction, norm_layer=norm_layer)
         self.norm = norm_layer(out_channels)
         
     def forward(self, x, H, W):
