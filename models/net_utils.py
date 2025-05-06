@@ -587,7 +587,8 @@ class GCNNetwork(nn.Module):
             self.convs.append(GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True))
         # final maps to full out_channels
         self.convs.append(GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True))
-        
+        #  dropout after each conv
+        self.dropout = nn.Dropout(p=C.GCN_dropout_rate)        
         self.norm = norm_layer(out_channels) 
         # k=0.5 controls how much the model balances pure spatial (coordinate) similarity vs. feature-based similarity when building its adjacency.
         # r=1.0 is used both as the bandwidth in the RBF (Gaussian) kernel over pixel coordinates and as the search radius when you do neighborhood graph construction.
@@ -623,6 +624,7 @@ class GCNNetwork(nn.Module):
         for conv in self.convs:
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
+            xg = self.dropout(xg)
         # global pooling
         xg = global_mean_pool(xg, batch)                    # [B, C_out]
 
@@ -643,7 +645,9 @@ class GCNNetworkV2(nn.Module):
             self.convs.append(GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True))
         # final maps to full out_channels
         self.convs.append(GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True))
-        
+        #  dropout after each conv
+        self.dropout = nn.Dropout(p=C.GCN_dropout_rate)  
+
         self.norm = norm_layer(out_channels) 
         # Graph constructor
         self.graph = GraphConstructor(k=0.5, r=1.0)
@@ -679,6 +683,7 @@ class GCNNetworkV2(nn.Module):
         for conv in self.convs:
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
+            xg = self.dropout(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
@@ -704,7 +709,8 @@ class GCNNetworkV3(nn.Module):
             self.convs.append(GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True))
         # final maps to full out_channels
         self.convs.append(GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True))
-        
+        #  dropout after each conv
+        self.dropout = nn.Dropout(p=C.GCN_dropout_rate)  
         self.norm = norm_layer(out_channels) 
         # Graph constructor
         self.graph = GraphConstructor(k=0.5, r=1.0)
@@ -745,6 +751,7 @@ class GCNNetworkV3(nn.Module):
         for conv in self.convs:
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
+            xg = self.dropout(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
@@ -774,7 +781,8 @@ class GCNNetworkV4(nn.Module):
             self.convs.append(GCNConv(out_channels//reduction, out_channels//reduction, aggr='mean', bias=True))
         # final maps to full out_channels
         self.convs.append(GCNConv(out_channels//reduction, out_channels, aggr='mean', bias=True))
-        
+        #  dropout after each conv
+        self.dropout = nn.Dropout(p=C.GCN_dropout_rate)  
         self.norm = norm_layer(out_channels) 
         # Graph constructor
         self.graph = GraphConstructor(k=0.5, r=1.0)
@@ -814,6 +822,7 @@ class GCNNetworkV4(nn.Module):
         for conv in self.convs:
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
+            xg = self.dropout(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]

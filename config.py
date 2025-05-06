@@ -56,10 +56,11 @@ C.decoder = 'MLPDecoder'  # Possibilities: MLPDecoder, UPernet, deeplabv3+, None
 C.decoder_embed_dim = 512 # Output dimension that decoder will project features to. Input dimensions are determined by backbone. # 512 b2, 768 b4,
 C.rectify_module = 'FRM'  # Possibilities: FRM, IFRM
 C.fusion_module = 'GFM'  # Possibilities: FFM, IFFM, GFM
-C.gfm_net_type = 'GCNNetworkV2'  # Possibilities: GCNNetwork, GCNNetworkV2, GCNNetworkV3
+C.gfm_net_type = 'GCNNetworkV4'  # Possibilities: GCNNetwork, GCNNetworkV2, GCNNetworkV3, GCNNetworkV4
 C.optimizer = 'AdamW'
 C.criterion = 'CE_SoftEdgeLoss'    # Possibilities: SigmoidFocalLoss, CrossEntropyLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, CE_CannyEdgeLoss, CE_SoftEdgeLoss
 C.GCN_layers = 2
+C.GCN_dropout_rate = 0.1
 C.sag_pool_ratio = 0.5
 
 # Integration weights for combined losses
@@ -88,7 +89,7 @@ C.weight_decay = 0.01  # Reduce slightly from 0.015 for cosine scheduler
 C.momentum = 0.9
 C.weight_decay = 0.01
 C.batch_size = 12
-C.nepochs = 50
+C.nepochs = 750
 C.niters_per_epoch = C.num_train_imgs // C.batch_size  + 1
 C.num_workers = 16
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75]
