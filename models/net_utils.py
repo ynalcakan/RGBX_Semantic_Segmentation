@@ -80,13 +80,14 @@ class ImprovedChannelWeights(nn.Module):
     
 
 class SpatialWeights(nn.Module):
-    def __init__(self, dim, reduction=1):
+    def __init__(self, dim, reduction=1, kernel_size=1):
         super(SpatialWeights, self).__init__()
         self.dim = dim
+        self.kernel_size = kernel_size
         self.mlp = nn.Sequential(
-                    nn.Conv2d(self.dim * 2, self.dim // reduction, kernel_size=1),
+                    nn.Conv2d(self.dim * 2, self.dim // reduction, kernel_size=self.kernel_size),
                     nn.ReLU(inplace=True),
-                    nn.Conv2d(self.dim // reduction, 2, kernel_size=1), 
+                    nn.Conv2d(self.dim // reduction, 2, kernel_size=self.kernel_size), 
                     nn.Sigmoid())
 
     def forward(self, x1, x2):
