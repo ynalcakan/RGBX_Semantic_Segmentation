@@ -901,7 +901,6 @@ class GCNNetworkV5(nn.Module):
             nn.Conv2d(out_channels * 2, out_channels * 2 // reduction, kernel_size=1, bias=True),
             nn.ReLU(inplace=False),
             nn.Conv2d(out_channels * 2 // reduction, out_channels, kernel_size=1, bias=True), 
-            # nn.LayerNorm(self.dim * 4 // reduction)
         )
 
     def forward(self, x):
@@ -934,6 +933,7 @@ class GCNNetworkV5(nn.Module):
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
             xg = self.dropout(xg)
+        xg = self.norm(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
