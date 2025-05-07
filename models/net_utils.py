@@ -718,6 +718,7 @@ class GCNNetworkV2(nn.Module):
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
             xg = self.dropout(xg)
+        xg = self.norm(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
@@ -786,6 +787,7 @@ class GCNNetworkV3(nn.Module):
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
             xg = self.dropout(xg)
+        xg = self.norm(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
@@ -857,6 +859,7 @@ class GCNNetworkV4(nn.Module):
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
             xg = self.dropout(xg)
+        xg = self.norm(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
@@ -892,11 +895,6 @@ class GCNNetworkV5(nn.Module):
         # Graph constructor
         self.graph = GraphConstructor(k=0.5, r=1.0)
 
-        # # Add SAGPooling module for graph pooling before fusion
-        # self.sag_pool = SAGPooling(out_channels, ratio=C.sag_pool_ratio)
-
-        # Convolution to fuse mean, max, and SAG pooled features
-        # self.fuse = nn.Conv2d(out_channels * 3, out_channels, kernel_size=1, bias=True)
         self.fuse = nn.Sequential(
             nn.Conv2d(out_channels * 2, out_channels * 2 // reduction, kernel_size=1, bias=True),
             nn.ReLU(inplace=False),
