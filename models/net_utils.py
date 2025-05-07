@@ -78,7 +78,7 @@ class ImprovedChannelWeights(nn.Module):
         channel_weights = y.view(B, 2, self.dim, 1, 1).permute(1, 0, 2, 3, 4)  # 2, B, dim, 1, 1
         return channel_weights
 
-class ImprovedChannelWeights(nn.Module):
+class ImprovedChannelWeightsV2(nn.Module):
     def __init__(self, dim, reduction=1):
         super(ImprovedChannelWeights, self).__init__()
         self.dim = dim
@@ -86,16 +86,11 @@ class ImprovedChannelWeights(nn.Module):
         self.max_pool = nn.AdaptiveMaxPool2d(1)
         
         self.mlp = nn.Sequential(
-            nn.Linear(self.dim * 4, self.dim * 4 // reduction),
+            nn.Conv2d(self.dim * 4, self.dim * 4 // reduction, kernel_size=1, bias=True),
             nn.LayerNorm(self.dim * 4 // reduction),
             nn.GELU(),
-            nn.Linear(self.dim * 4 // reduction, self.dim * 2),
+            nn.Conv2d(self.dim * 4, self.dim * 2 // reduction, kernel_size=1, bias=True),
             nn.LayerNorm(self.dim * 2)
-        )
-        
-        self.gate = nn.Sequential(
-            nn.Linear(self.dim * 2, self.dim * 2),
-            nn.Sigmoid()
         )
 
     def forward(self, x1, x2):
@@ -113,7 +108,6 @@ class ImprovedChannelWeights(nn.Module):
         # Reshape to the expected output format
         channel_weights = y.view(B, 2, self.dim, 1, 1).permute(1, 0, 2, 3, 4)  # 2, B, dim, 1, 1
         return channel_weights
-    
 
 class SpatialWeights(nn.Module):
     def __init__(self, dim, reduction=1, kernel_size=1):
@@ -907,6 +901,7 @@ class GCNNetworkV5(nn.Module):
             nn.Conv2d(out_channels * 2, out_channels * 2 // reduction, kernel_size=1, bias=True),
             nn.ReLU(inplace=False),
             nn.Conv2d(out_channels * 2 // reduction, out_channels, kernel_size=1, bias=True), 
+            # nn.LayerNorm(self.dim * 4 // reduction)
         )
 
     def forward(self, x):
