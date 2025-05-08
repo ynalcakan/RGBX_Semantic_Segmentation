@@ -78,19 +78,21 @@ class ImprovedChannelWeights(nn.Module):
         channel_weights = y.view(B, 2, self.dim, 1, 1).permute(1, 0, 2, 3, 4)  # 2, B, dim, 1, 1
         return channel_weights
 
-class ImprovedChannelWeightsV2(nn.Module):
+class ChannelWeightsV2(nn.Module):
     def __init__(self, dim, reduction=1):
-        super(ImprovedChannelWeights, self).__init__()
+        super(ChannelWeightsV2, self).__init__()
         self.dim = dim
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
         
+        self.norm = nn.BatchNorm2d(dim)
+
         self.mlp = nn.Sequential(
-            nn.Conv2d(self.dim * 4, self.dim * 4 // reduction, kernel_size=1, bias=True),
-            nn.LayerNorm(self.dim * 4 // reduction),
+            nn.Linear(self.dim * 4, self.dim * 4 // reduction),
+            nn.BatchNorm1d(self.dim * 4 // reduction),
             nn.GELU(),
-            nn.Conv2d(self.dim * 4, self.dim * 2 // reduction, kernel_size=1, bias=True),
-            nn.LayerNorm(self.dim * 2)
+            nn.Linear(self.dim * 4 // reduction, self.dim * 2),
+            nn.BatchNorm1d(self.dim * 2)
         )
 
     def forward(self, x1, x2):
@@ -163,7 +165,27 @@ class ImprovedSpatialWeights(nn.Module):
         
         spatial_weights = y.view(B, 2, 1, H, W).permute(1, 0, 2, 3, 4)
         return spatial_weights
+    
+class SpatialWeightsV2(nn.Module):
+    def __init__(self, dim, reduction=1, kernel_size=1):
+        super(SpatialWeightsV2, self).__init__()
+        self.dim = dim
+        self.kernel_size = kernel_size
+        self.mlp = nn.Sequential(
+                    nn.Conv2d(self.dim * 2, self.dim // reduction, kernel_size=self.kernel_size),
+                    nn.BatchNorm2d(self.dim // reduction),
+                    nn.ReLU(inplace=False),
+                    nn.Conv2d(self.dim // reduction, 2, kernel_size=self.kernel_size),
+                    nn.BatchNorm2d(2))
+        
+        self.norm = nn.BatchNorm2d(dim)
 
+    def forward(self, x1, x2):
+        B, _, H, W = x1.shape
+
+        x = torch.cat((x1, x2), dim=1) # B 2C H W
+        spatial_weights = self.mlp(x).reshape(B, 2, 1, H, W).permute(1, 0, 2, 3, 4) # 2 B 1 H W
+        return spatial_weights
 
 class FeatureRectifyModule(nn.Module):
     def __init__(self, dim, reduction=1, lambda_c=.5, lambda_s=.5):
@@ -252,7 +274,55 @@ class ImprovedFeatureRectifyModule(nn.Module):
         out_x2 = self.norm(out_x2.permute(0, 2, 3, 1)).permute(0, 3, 1, 2).contiguous()
         
         return out_x1, out_x2
+    
+class ImprovedFeatureRectifyModuleV2(nn.Module):
+    def __init__(self, dim, reduction=1):
+        super(ImprovedFeatureRectifyModuleV2, self).__init__()
+        self.channel_weights = ChannelWeightsV2(dim=dim, reduction=reduction)
+        self.spatial_weights = SpatialWeightsV2(dim=dim, reduction=reduction)
+        
+        # Dynamic lambda
+        self.lambda_channel = nn.Parameter(torch.tensor(0.5))
+        self.lambda_spatial = nn.Parameter(torch.tensor(0.5))
+        
+        # Layer normalization
+        self.norm = nn.LayerNorm(dim)
+        
+        self.apply(self._init_weights)
+    
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv2d):
+            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+            fan_out //= m.groups
+            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
+            if m.bias is not None:
+                m.bias.data.zero_()
 
+    def forward(self, x1, x2):
+        # Check dimensions
+        B, C, H, W = x1.shape
+        assert x1.shape == x2.shape, f"Input shapes do not match: {x1.shape} vs {x2.shape}"
+        assert C == self.channel_weights.dim, f"Input channel dimension {C} does not match expected dimension {self.channel_weights.dim}"
+        
+        channel_weights = self.channel_weights(x1, x2)
+        spatial_weights = self.spatial_weights(x1, x2)
+        
+        # Use dynamic lambda values
+        out_x1 = x1 + self.lambda_channel * channel_weights[1] * x2 + self.lambda_spatial * spatial_weights[1] * x2
+        out_x2 = x2 + self.lambda_channel * channel_weights[0] * x1 + self.lambda_spatial * spatial_weights[0] * x1
+        
+        # Apply layer normalization
+        out_x1 = self.norm(out_x1.permute(0, 2, 3, 1)).permute(0, 3, 1, 2).contiguous()
+        out_x2 = self.norm(out_x2.permute(0, 2, 3, 1)).permute(0, 3, 1, 2).contiguous()
+        
+        return out_x1, out_x2
 
 # ---------------------  Feature Fusion Module --------------------- #
 # Stage 1
@@ -664,6 +734,7 @@ class GCNNetwork(nn.Module):
 
         # reshape to spatial (B, C_out, 1, 1) and normalize
         xg = xg.view(B, -1, 1, 1)
+
         xg = self.norm(xg)
         return xg
     
@@ -718,13 +789,17 @@ class GCNNetworkV2(nn.Module):
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
             xg = self.dropout(xg)
-        xg = self.norm(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
         # reshape to spatial (B, C_out, 1, 1) and normalize
         x_mean = x_mean.view(B, -1, 1, 1)
         x_max = x_max.view(B, -1, 1, 1)
+
+        # norm before feature fusion
+        x_mean = self.norm(x_mean)
+        x_max = self.norm(x_max)
+
         # Fuse mean and max pooled features by 1x1 convolution
         x_cat = torch.cat((x_mean, x_max), dim=1)  # (B, 2*C_out, 1,1)
         xg = self.fuse(x_cat)  # (B, C_out, 1,1)
@@ -787,10 +862,13 @@ class GCNNetworkV3(nn.Module):
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
             xg = self.dropout(xg)
-        xg = self.norm(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
+
+        # norm before feature fusion
+        x_mean = self.norm(x_mean)
+        x_max = self.norm(x_max)
 
         # reshape to spatial (B, C_out, 1, 1) and normalize
         x_mean = x_mean.view(B, -1, 1, 1)
@@ -859,7 +937,6 @@ class GCNNetworkV4(nn.Module):
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
             xg = self.dropout(xg)
-        xg = self.norm(xg)
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
@@ -870,6 +947,12 @@ class GCNNetworkV4(nn.Module):
         x_mean = x_mean.view(B, -1, 1, 1)
         x_max = x_max.view(B, -1, 1, 1)
         x_sag = x_sag.view(B, -1, 1, 1)
+
+        # norm before feature fusion
+        x_mean = self.norm(x_mean)
+        x_max = self.norm(x_max)
+        x_sag = self.norm(x_sag)
+
         # Fuse mean and max pooled features by 1x1 convolution
         x_cat = torch.cat((x_mean, x_max, x_sag), dim=1)  # (B, 3*C_out, 1,1)
         xg = self.fuse(x_cat)  # (B, C_out, 1,1)
@@ -931,19 +1014,22 @@ class GCNNetworkV5(nn.Module):
             xg = conv(xg, edge_index)
             xg = F.relu(xg)
             xg = self.dropout(xg)
-        xg = self.norm(xg)
+   
         # global pooling
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
-        # Replace direct call to SAGPooling with module usage
-        # x_sag_nodes, _, _, batch_sag, _, _ = self.sag_pool(xg, edge_index, None, batch)
-        # x_sag = global_mean_pool(x_sag_nodes, batch_sag)  # [B, C_out]
+
         # reshape to spatial (B, C_out, 1, 1) and normalize
         x_mean = x_mean.view(B, -1, 1, 1)
         x_max = x_max.view(B, -1, 1, 1)
-        # x_sag = x_sag.view(B, -1, 1, 1)
+        
+        # norm before feature fusion
+        x_mean = self.norm(x_mean)
+        x_max = self.norm(x_max)
+
         # Fuse mean and max pooled features by 1x1 convolution
         x_cat = torch.cat((x_mean, x_max), dim=1)  # (B, 2*C_out, 1,1)  # x_sag
+
         xg = self.fuse(x_cat)  # (B, C_out, 1,1)
         xg = self.norm(xg)
         

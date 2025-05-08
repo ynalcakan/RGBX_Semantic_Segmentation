@@ -8,6 +8,7 @@ from ..net_utils import FeatureFusionModule as FFM
 from ..net_utils import FeatureRectifyModule as FRM
 from ..net_utils import ImprovedFeatureRectifyModule as IFRM
 from ..net_utils import ImprovedFeatureFusionModule as IFFM
+from ..net_utils import ImprovedFeatureRectifyModuleV2 as IFRMv2
 from ..net_utils import GraphFeatureFusionModule as GFM
 import math
 import time
@@ -346,8 +347,15 @@ class RGBXTransformer(nn.Module):
                         IFRM(dim=embed_dims[1], reduction=1),
                         IFRM(dim=embed_dims[2], reduction=1),
                         IFRM(dim=embed_dims[3], reduction=1)])
+        elif self.rectify_module == 'IFRMV2':
+            logger.info("Using IFRMv2 rectify modules")
+            self.RMs = nn.ModuleList([
+                        IFRMv2(dim=embed_dims[0], reduction=1),
+                        IFRMv2(dim=embed_dims[1], reduction=1),
+                        IFRMv2(dim=embed_dims[2], reduction=1),
+                        IFRMv2(dim=embed_dims[3], reduction=1)])
         else:
-            raise ValueError(f"Invalid rectify_module: {self.rectify_module}. Must be 'FRM' or 'IFRM'")
+            raise ValueError(f"Invalid rectify_module: {self.rectify_module}. Must be 'FRM' or 'IFRM' or 'IFRMV2'")
 
         # Initialize fusion modules
         if self.fusion_module == 'FFM':
