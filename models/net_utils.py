@@ -802,7 +802,7 @@ class GCNNetworkV2(nn.Module):
 
         # Fuse mean and max pooled features by 1x1 convolution
         x_cat = torch.cat((x_mean, x_max), dim=1)  # (B, 2*C_out, 1,1)
-        xg = self.fuse(x_cat)  # (B, C_out, 1,1)
+        xg = self.fuse(x_cat)  # (B, C_out, 1,1)    
         xg = self.norm(xg)
         
         return xg
