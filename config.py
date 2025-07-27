@@ -24,7 +24,7 @@ C.abs_dir = osp.realpath(".")
 # Dataset config
 """Dataset Path"""
 C.dataset_name = 'MFNet'
-C.dataset_path = osp.join(C.root_dir, '../Datasets', 'MFNet')
+C.dataset_path = osp.join(C.root_dir, 'datasets', 'MFNet')
 C.rgb_root_folder = osp.join(C.dataset_path, 'RGB')
 C.rgb_format = '.png'
 C.gt_root_folder = osp.join(C.dataset_path, 'Label')

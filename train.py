@@ -143,7 +143,7 @@ with Engine(custom_parser=parser) as engine:
         model.train()
         logger.info('begin trainning:')
     
-    scaler = GradScaler()
+    scaler = GradScaler('cuda')
 
     for epoch in range(engine.state.epoch, config.nepochs+1):
         if engine.distributed:

@@ -6,11 +6,11 @@ import cv2
 import numpy as np
 import numbers
 import random
-import collections
+from collections.abc import Iterable
 
 
 def get_2dshape(shape, *, zero=True):
-    if not isinstance(shape, collections.Iterable):
+    if not isinstance(shape, Iterable):
         shape = int(shape)
         shape = (shape, shape)
     else:
