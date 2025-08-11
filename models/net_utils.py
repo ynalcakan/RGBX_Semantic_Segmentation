@@ -866,13 +866,13 @@ class GCNNetworkV3(nn.Module):
         x_mean = global_mean_pool(xg, batch)                    # [B, C_out]
         x_max = global_max_pool(xg, batch)                    # [B, C_out]
 
-        # norm before feature fusion
-        x_mean = self.norm(x_mean)
-        x_max = self.norm(x_max)
-
         # reshape to spatial (B, C_out, 1, 1) and normalize
         x_mean = x_mean.view(B, -1, 1, 1)
         x_max = x_max.view(B, -1, 1, 1)
+
+        # norm before feature fusion
+        x_mean = self.norm(x_mean)
+        x_max = self.norm(x_max)
 
         # Dynamic gating fusion of mean and max pooled features
         x_cat = torch.cat((x_mean, x_max), dim=1)  # (B, 2*C_out, 1,1)
