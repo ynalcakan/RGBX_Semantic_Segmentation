@@ -165,15 +165,10 @@ class EncoderDecoder(nn.Module):
         out = self.decode_head.forward(x)
         
         if isinstance(out, dict):  # For Mask2Former
-            # Get mask predictions and resize
+            # Resize mask logits to original size (keep as logits; do not sigmoid here)
             masks = out['pred_masks']  # [B, num_queries, H, W]
             masks = F.interpolate(masks, size=orisize[2:], mode='bilinear', align_corners=False)
-            # Apply sigmoid for final mask probabilities
-            masks = masks.sigmoid()
-            # Get class predictions
             logits = out['pred_logits']  # [B, num_queries, num_classes+1]
-            
-            # Return the dictionary format for loss computation
             return {
                 'pred_logits': logits,
                 'pred_masks': masks
