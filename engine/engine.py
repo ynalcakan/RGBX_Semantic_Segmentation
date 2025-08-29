@@ -71,7 +71,7 @@ class Engine(object):
                        metavar="FILE",
                        dest="continue_fpath",
                        help='continue from one certain checkpoint')
-        p.add_argument('--local_rank', default=0, type=int,
+        p.add_argument('--local_rank', '--local-rank', default=0, type=int,
                        help='process rank on node')
         p.add_argument('-p', '--port', type=str,
                        default='16005',
