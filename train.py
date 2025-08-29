@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import argparse
+import numpy as np
 from tqdm import tqdm
 
 import torch
@@ -16,7 +17,7 @@ import warnings
 warnings.filterwarnings("ignore", message="Grad strides do not match bucket view strides")
 
 from config import config
-from dataloader.dataloader import get_train_loader
+from dataloader.dataloader import get_train_loader, ValPre
 from models.builder import EncoderDecoder as segmodel
 from dataloader.RGBXDataset import RGBXDataset
 from utils.init_func import init_weight, group_weight # For weight decay of the model - optimizer
@@ -25,6 +26,8 @@ from engine.engine import Engine
 from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor # For distributed training
 from utils.loss_opr import FocalLoss2d, RCELoss, BalanceLoss, berHuLoss, SigmoidFocalLoss, TopologyAwareLoss, ClassBalancedCELoss, BatchBalancedCELoss, MABalancedCELoss, MedianFreqCELoss, CannyEdgeLoss, SoftEdgeLoss
+from utils.metric import hist_info, compute_score
+from utils.transforms import normalize
 
 from tensorboardX import SummaryWriter
 
@@ -106,6 +109,8 @@ with Engine(custom_parser=parser) as engine:
         criterion1 = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
         criterion2 = SoftEdgeLoss(ignore_index=config.background, reduction='mean')
         criterion = (criterion1, criterion2)
+    elif criterion == 'Mask2FormerLoss':
+        criterion = Mask2FormerLoss(num_classes=config.num_classes, ignore_index=config.background)
     else:
         raise NotImplementedError
 
@@ -179,6 +184,76 @@ with Engine(custom_parser=parser) as engine:
 
     engine.register_state(dataloader=train_loader, model=model,optimizer=optimizer)
 
+    # Prepare test/val dataset for per-epoch evaluation (no gradient, no training impact)
+    data_setting = {'rgb_root': config.rgb_root_folder,
+                    'rgb_format': config.rgb_format,
+                    'gt_root': config.gt_root_folder,
+                    'gt_format': config.gt_format,
+                    'transform_gt': config.gt_transform,
+                    'x_root':config.x_root_folder,
+                    'x_format': config.x_format,
+                    'x_single_channel': config.x_is_single_channel,
+                    'class_names': config.class_names,
+                    'train_source': config.train_source,
+                    'eval_source': config.eval_source,
+                    'class_names': config.class_names}
+    val_pre = ValPre()
+    test_dataset = RGBXDataset(data_setting, 'val', val_pre)
+
+    def evaluate_miou(current_model):
+        """Evaluate mIoU on the test/val split. Runs entirely without gradients."""
+        was_training = current_model.training
+        current_model.eval()
+        device = torch.device("cuda", engine.local_rank) if torch.cuda.is_available() else torch.device("cpu")
+
+        hist = np.zeros((config.num_classes, config.num_classes))
+        correct = 0
+        labeled = 0
+
+        with torch.no_grad():
+            for idx in range(test_dataset.get_length()):
+                sample = test_dataset[idx]
+                img = sample['data']
+                label = sample['label']
+                modal_x = sample['modal_x']
+
+                # Normalize inputs like in evaluation utils
+                img = normalize(img, config.norm_mean, config.norm_std)
+                if len(modal_x.shape) == 2:
+                    modal_x = normalize(modal_x, 0, 1)
+                    modal_x = np.expand_dims(modal_x, -1)
+                    modal_x = np.repeat(modal_x, 3, axis=2)
+                else:
+                    modal_x = normalize(modal_x, config.norm_mean, config.norm_std)
+
+                img_t = torch.from_numpy(img.transpose(2, 0, 1)).unsqueeze(0).float().to(device)
+                modal_x_t = torch.from_numpy(modal_x.transpose(2, 0, 1)).unsqueeze(0).float().to(device)
+
+                out = current_model(img_t, modal_x_t)
+
+                # Support both standard decoders and Mask2Former outputs
+                if isinstance(out, dict) and ('pred_logits' in out) and ('pred_masks' in out):
+                    pred_logits = out['pred_logits']               # [B, Q, C+1]
+                    pred_masks = out['pred_masks']                 # [B, Q, H, W]
+                    class_probs = torch.softmax(pred_logits, dim=-1)[..., :config.num_classes]
+                    mask_probs = torch.sigmoid(pred_masks)
+                    score_map = torch.einsum('bqc,bqhw->bchw', class_probs, mask_probs)
+                    pred = score_map.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.int32)
+                else:
+                    if isinstance(out, tuple):
+                        out = out[0]
+                    pred = out.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.int32)
+
+                hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
+                hist += hist_tmp
+                labeled += labeled_tmp
+                correct += correct_tmp
+
+        iou, mean_IoU, _, freq_IoU, mean_pixel_acc, pixel_acc = compute_score(hist, correct, labeled)
+        if was_training:
+            current_model.train()
+        return float(mean_IoU)
+
     if engine.continue_state_object:
         engine.restore_checkpoint()
     else:
@@ -186,6 +261,7 @@ with Engine(custom_parser=parser) as engine:
         model.train()
         logger.info('begin trainning:')
     
+    best_miou = -1.0
     for epoch in range(engine.state.epoch, config.nepochs+1):
         logger.info(f"--> [Epoch {epoch}] Starting...")
         if engine.distributed:
@@ -212,7 +288,10 @@ with Engine(custom_parser=parser) as engine:
 
             aux_rate = 0.2
 
-            if isinstance(criterion, tuple):
+            # Handle DDP-wrapped model when checking criterion
+            _model = model.module if isinstance(model, DistributedDataParallel) else model
+            # Decide based on the model's own criterion to avoid mismatch with decoder-specific loss
+            if isinstance(_model.criterion, tuple):
                 loss, loss_components = model(imgs, modal_xs, gts)
             else:
                 loss = model(imgs, modal_xs, gts)
@@ -238,7 +317,7 @@ with Engine(custom_parser=parser) as engine:
                         + ' loss=%.4f total_loss=%.4f' % (reduce_loss.item(), (sum_loss / (idx + 1)))
                 
                 # Add individual loss components only for multiple losses
-                if isinstance(criterion, tuple):
+                if isinstance(_model.criterion, tuple):
                     # Initialize loss_sums dict if it doesn't exist
                     if not hasattr(engine, 'loss_sums'):
                         engine.loss_sums = {key: 0.0 for key in loss_components.keys()}
@@ -255,7 +334,7 @@ with Engine(custom_parser=parser) as engine:
                         + ' loss=%.4f total_loss=%.4f' % (loss, (sum_loss / (idx + 1)))
                 
                 # Add individual loss components only for multiple losses (non-distributed case)
-                if isinstance(criterion, tuple):
+                if isinstance(_model.criterion, tuple):
                     # Initialize loss_sums dict if it doesn't exist
                     if not hasattr(engine, 'loss_sums'):
                         engine.loss_sums = {key: 0.0 for key in loss_components.keys()}
@@ -271,11 +350,24 @@ with Engine(custom_parser=parser) as engine:
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
             
             # Add individual loss components to TensorBoard if using multiple losses
-            if isinstance(criterion, tuple) and hasattr(engine, 'loss_sums'):
+            if isinstance(_model.criterion, tuple) and hasattr(engine, 'loss_sums'):
                 for key in engine.loss_sums.keys():
                     tb.add_scalar(f'train_{key}', engine.loss_sums[key] / len(pbar), epoch)
                 # Reset loss sums for next epoch
                 engine.loss_sums = {key: 0.0 for key in engine.loss_sums.keys()}
+
+        # Evaluate on test set (no gradients) and save best-by-mIoU checkpoint
+        if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
+            miou = evaluate_miou(model)
+            if tb is not None:
+                tb.add_scalar('test_mIoU', miou, epoch)
+            logger.info(f"[Epoch {epoch}] Test mIoU: {miou:.4f}")
+            if miou > best_miou:
+                best_miou = miou
+                os.makedirs(config.checkpoint_dir, exist_ok=True)
+                best_ckpt = osp.join(config.checkpoint_dir, 'best_miou.pth')
+                engine.save_checkpoint(best_ckpt)
+                logger.info(f"Saved new best mIoU checkpoint at {best_ckpt} (mIoU={best_miou:.4f})")
 
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if engine.distributed and (engine.local_rank == 0):

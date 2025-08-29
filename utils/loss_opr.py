@@ -221,134 +221,101 @@ class ProbOhemCrossEntropy2d(nn.Module):
 
 class Mask2FormerLoss(nn.Module):
     """
-    Mask2FormerLoss is a loss function that combines the cross-entropy loss and the mask2former loss.
+    Semantic Mask2Former-style loss.
+
+    Aggregates query masks into per-class probability maps and applies:
+    - per-pixel NLLLoss (cross-entropy) against class labels
+    - per-class Dice loss on aggregated maps
+
+    This avoids instance-level matching and works well for semantic segmentation.
     """
-    def __init__(self, num_classes, matcher_weight_dict={'class': 2, 'mask': 5, 'dice': 5}, 
-                 losses=['labels', 'masks'], eos_coef=0.1, ignore_index=255):
-        """
-        Parameters:
-            num_classes: number of object classes (including background)
-            matcher_weight_dict: weights for matcher cost computation
-            losses: list of losses to apply
-            eos_coef: relative weight for no-object class
-            ignore_index: label value to ignore
-        """
+    def __init__(self, num_classes, matcher_weight_dict={'class': 2.0, 'dice': 5.0}, ignore_index=255, eps: float = 1e-6):
         super().__init__()
         self.num_classes = num_classes
-        self.matcher_weight_dict = matcher_weight_dict
-        self.losses = losses
-        self.eos_coef = eos_coef
         self.ignore_index = ignore_index
-        
-        # Create class weight for cross entropy
-        empty_weight = torch.ones(self.num_classes + 1)
-        empty_weight[-1] = self.eos_coef  # lower weight for no-object class
-        self.register_buffer('empty_weight', empty_weight)
+        self.eps = eps
+        # reuse keys from existing config for compatibility
+        self.class_weight = matcher_weight_dict.get('class', 2.0)
+        self.dice_weight = matcher_weight_dict.get('dice', 5.0)
 
-    def loss_labels(self, outputs, targets, indices):
-        """Classification loss (NLL)"""
-        src_logits = outputs['pred_logits']  # [B, num_queries, num_classes+1]
-        
-        # Flatten the targets to match with predictions
-        B, num_queries, _ = src_logits.shape
-        target_classes = torch.full((B, num_queries), self.num_classes,
-                                  dtype=torch.int64, device=src_logits.device)
-        
-        # Create a binary mask for valid (non-ignored) pixels
-        valid_mask = targets != self.ignore_index  # [B, H, W]
-        
-        # For each valid pixel in the target, assign it to the closest query
-        for b in range(B):
-            valid_pixels = valid_mask[b]  # [H, W]
-            if valid_pixels.any():
-                # Get valid target values
-                valid_targets = targets[b][valid_pixels]  # [N]
-                
-                # Get predictions for this batch
-                pred_masks = outputs['pred_masks'][b]  # [num_queries, H, W]
-                pred_masks = pred_masks[:, valid_pixels]  # [num_queries, N]
-                
-                # Compute similarity between queries and target pixels
-                similarity = pred_masks.sigmoid()  # [num_queries, N]
-                
-                # Assign each pixel to the most similar query
-                assignments = similarity.max(dim=0)[1]  # [N]
-                
-                # Update target classes for assigned queries
-                for query_idx in range(num_queries):
-                    query_pixels = assignments == query_idx
-                    if query_pixels.any():
-                        # Most common class for this query's assigned pixels
-                        target_class = valid_targets[query_pixels].mode()[0]
-                        target_classes[b, query_idx] = target_class
-        
-        # Add focal loss
-        ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, 
-                                self.empty_weight, ignore_index=self.num_classes,
-                                reduction='none')
-        p = torch.exp(-ce_loss)
-        loss_ce = ((1 - p) ** 2.0) * ce_loss
-        loss_ce = loss_ce.mean()
-        
-        return loss_ce
+    def _aggregate_class_maps(self, pred_logits: torch.Tensor, pred_masks: torch.Tensor) -> torch.Tensor:
+        """
+        pred_logits: [B, Q, C+1] (includes no-object)
+        pred_masks:  [B, Q, H, W] (logits)
+        returns per-class probability maps [B, C, H, W]
+        """
+        B, Q, _ = pred_logits.shape
+        _, _, H, W = pred_masks.shape
 
-    def loss_masks(self, outputs, targets, indices):
-        """Compute the losses related to the masks"""
-        src_masks = outputs['pred_masks']  # [B, Q, H, W]
-        B, Q, H, W = src_masks.shape
+        # Query class probabilities (exclude no-object)
+        class_prob = F.softmax(pred_logits, dim=-1)[..., :self.num_classes]  # [B, Q, C]
+        # Mask probabilities
+        mask_prob = pred_masks.sigmoid()  # [B, Q, H, W]
 
-        # Cross entropy loss - reshape masks to [B*H*W, Q]
-        src_masks_ce = src_masks.permute(0, 2, 3, 1).reshape(-1, Q)  # [B*H*W, Q]
-        targets_ce = targets.reshape(-1)  # [B*H*W]
-        
-        # Don't use class weights for mask loss
-        ce_loss = F.cross_entropy(src_masks_ce, targets_ce, 
-                                weight=None,  # Remove empty_weight here
-                                ignore_index=self.ignore_index,
-                                reduction='mean')
+        # Aggregate: S[b,c,h,w] = sum_q P(c|q) * P(mask_q at (h,w))
+        # Implement via einsum for clarity
+        # class_prob: [B,Q,C] -> [B,C,Q] for einsum convenience
+        class_prob_t = class_prob.permute(0, 2, 1)  # [B, C, Q]
+        mask_prob_flat = mask_prob.view(B, Q, H * W)  # [B, Q, HW]
+        agg_flat = torch.einsum('bcq,bqh->bch', class_prob_t, mask_prob_flat)  # [B, C, HW]
+        agg = agg_flat.view(B, self.num_classes, H, W)  # [B, C, H, W]
 
-        # Dice loss
-        target_masks = (targets.unsqueeze(1) == torch.arange(self.num_classes, 
-                       device=targets.device).reshape(1, -1, 1, 1))
-        target_masks = target_masks.float()
-        
-        valid_mask = (targets != self.ignore_index).unsqueeze(1).float()
-        
-        src_masks = src_masks.sigmoid()
-        dice_loss = 0
-        
-        for i in range(self.num_classes):
-            if target_masks[:, i].sum() > 0:
-                dice_score = 2 * (src_masks * target_masks[:, i].unsqueeze(1) * valid_mask).sum(dim=(2, 3)) / \
-                           (src_masks.sum(dim=(2, 3)) + target_masks[:, i].unsqueeze(1).sum(dim=(2, 3)) + 1e-8)
-                dice_loss += (1 - dice_score.mean())
-        
-        dice_loss = dice_loss / self.num_classes
+        # Normalize across queries magnitude by total mask mass to stabilize
+        denom_flat = mask_prob_flat.sum(dim=1, keepdim=False)  # [B, HW]
+        denom = denom_flat.view(B, 1, H, W) + self.eps
+        agg = agg / denom  # still not normalized across classes
 
-        # Combine losses with their respective weights
-        combined_loss = self.matcher_weight_dict['mask'] * ce_loss + \
-                       self.matcher_weight_dict['dice'] * dice_loss
-        
-        return combined_loss
+        # Normalize across classes to produce a valid per-pixel distribution
+        class_sum = agg.sum(dim=1, keepdim=True) + self.eps
+        prob = agg / class_sum  # [B, C, H, W]
+        return prob
+
+    def _dice_loss(self, pred_prob: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Per-class soft Dice loss on aggregated class probabilities.
+        pred_prob: [B, C, H, W], target: [B, H, W] (int)
+        """
+        B, C, H, W = pred_prob.shape
+        valid = (target != self.ignore_index).float().unsqueeze(1)  # [B,1,H,W]
+
+        # one-hot target
+        target_oh = torch.zeros((B, C, H, W), device=pred_prob.device, dtype=pred_prob.dtype)
+        for c in range(C):
+            target_oh[:, c] = (target == c).float()
+
+        pred = pred_prob * valid
+        targ = target_oh * valid
+
+        pred_flat = pred.flatten(2)  # [B,C,HW]
+        targ_flat = targ.flatten(2)
+
+        intersection = (pred_flat * targ_flat).sum(dim=2)
+        union = pred_flat.sum(dim=2) + targ_flat.sum(dim=2) + self.eps
+        dice = 2.0 * intersection / union  # [B,C]
+        # average over present classes to avoid penalizing absent classes too much
+        present = (targ_flat.sum(dim=2) > 0).float()
+        dice_per_batch = (dice * present).sum(dim=1) / (present.sum(dim=1) + self.eps)
+        loss = 1.0 - dice_per_batch.mean()
+        return loss
 
     def forward(self, outputs, targets):
         """
-        Parameters:
-            outputs: dict containing 'pred_logits' and 'pred_masks'
-            targets: ground truth segmentation map [B, H, W]
+        outputs: { 'pred_logits': [B,Q,C+1], 'pred_masks': [B,Q,H,W] logits }
+        targets: [B,H,W] int labels
         """
-        losses = {}
-        
-        if 'labels' in self.losses:
-            losses['loss_cls'] = self.loss_labels(outputs, targets, None) * self.matcher_weight_dict['class']
-        
-        if 'masks' in self.losses:
-            losses['loss_mask'] = self.loss_masks(outputs, targets, None)
-        
-        # Compute total loss as weighted sum
-        total_loss = sum(losses.values())
-        
-        return total_loss
+        pred_logits = outputs['pred_logits']
+        pred_masks = outputs['pred_masks']
+
+        # Aggregate queries into per-pixel per-class probabilities
+        prob_maps = self._aggregate_class_maps(pred_logits, pred_masks)  # [B,C,H,W]
+
+        # Cross-entropy on aggregated distribution
+        log_prob = torch.log(prob_maps.clamp(min=self.eps))  # [B,C,H,W]
+        ce = F.nll_loss(log_prob, targets, ignore_index=self.ignore_index, reduction='mean')
+
+        # Dice loss per class
+        dice = self._dice_loss(prob_maps, targets)
+
+        return self.class_weight * ce + self.dice_weight * dice
 
 class TopologyAwareLoss(nn.Module):
     """
